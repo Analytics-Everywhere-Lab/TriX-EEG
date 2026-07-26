@@ -1,0 +1,9 @@
+numpy
+scipy
+torch
+torchinfo
+tqdm
+pandas
+matplotlib
+PyYAML
+einops
