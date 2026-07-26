@@ -1,0 +1,20 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.venv/
+
+# Generated experiment artifacts
+runs/
+outputs/
+benchmark_models/
+experiments/
+!experiments/.gitkeep
+visualization/
+!visualization/.gitkeep
+
+# Local datasets: keep directory placeholders only
+data/*
+!data/.gitkeep
+cross_data/*
+!cross_data/.gitkeep
