@@ -131,9 +131,6 @@ MPLBACKEND=Agg python eval_cross_dataset.py \
   --routing-save-path figures/routing_vis_cross_dataset.png
 ```
 
-Controlled-SNR evaluation calculates the artifact residual as
-`contaminated − clean`, scales that residual independently for each window and
-channel to the requested SNR, and evaluates `clean + scaled residual`.
 
 ## Tests
 
