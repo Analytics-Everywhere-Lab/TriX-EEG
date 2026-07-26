@@ -1,0 +1,17 @@
+{
+  "noise_type": "EMG",
+  "requested_snr_level": -2,
+  "actual_sample_snr": -2.0,
+  "sample_index": 15,
+  "methods": [
+    "BRAA",
+    "deepseparator",
+    "fcnn",
+    "rnnlstm",
+    "simplecnn",
+    "complexcnn",
+    "det",
+    "lrr_unet"
+  ],
+  "save_dir": "./figures/model_output_comparison/EMG/snr_-2"
+}
