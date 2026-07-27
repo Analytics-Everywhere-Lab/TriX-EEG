@@ -232,7 +232,6 @@ def create_cross_eeg_dataset(
     resample=False,
     normalize=True,
 ):
-    """Create a CrossEEGDataset using the shared project defaults."""
     return CrossEEGDataset(
         data_folder=data_folder,
         subject_ids=subject_ids,
@@ -255,7 +254,7 @@ def create_cross_eeg_dataloader(
     device=None,
     **dataset_kwargs,
 ):
-    """Create a synchronized CrossEEGDataset and DataLoader configuration."""
+    """Create EEG-EOG dataset and DataLoader configuration."""
     dataset = create_cross_eeg_dataset(**dataset_kwargs)
     if pin_memory is None:
         pin_memory = device is not None and device.type == "cuda"
@@ -269,7 +268,6 @@ def create_cross_eeg_dataloader(
 
 
 def parse_cross_subject_ids(value):
-    """Parse ``all``, comma-separated IDs, or inclusive ID ranges."""
     if value is None or value.strip().lower() == "all":
         return None
     subject_ids = []
@@ -285,21 +283,20 @@ def parse_cross_subject_ids(value):
 
 class EEGDenoiseNetDatasetBenchmark(Dataset):
     """
-    EEGDenoiseNet benchmark-style dataset 
+    EEGDenoiseNet dataset 
 
     Noise_type:
         - "EOG"
         - "EMG"
         - "MIXED"   
 
-    Benchmark-aligned behavior:
-        - split into train / val / test with ratio 80 / 10 / 10
-        - each split is expanded by 10 fixed SNR levels:
-            [-7, -6, -5, -4, -3, -2, -1, 0, 1, 2] dB
-        - EOG mode:
-            use 3400 EEG + 3400 EOG (truncate EEG to EOG count)
-        - EMG mode:
-            reuse some EEG to match EMG count
+    - split into train / val / test with ratio 80 / 10 / 10
+    - each split is expanded by 10 fixed SNR levels:
+        [-7, -6, -5, -4, -3, -2, -1, 0, 1, 2] dB
+    - EOG mode:
+        use 3400 EEG + 3400 EOG (truncate EEG to EOG count)
+    - EMG mode:
+        reuse some EEG to match EMG count
 
     MIXED mode extension:
         - align EEG, EOG, EMG to a common count
@@ -446,7 +443,7 @@ class EEGDenoiseNetDatasetBenchmark(Dataset):
         """
         EOG benchmark:
         - use 3400 EOG
-        - use 3400 EEG by truncating EEG after shuffling
+        - use 3400 EEG by truncating EEG 
         """
         eeg = self.eeg_all[rng.permutation(self.eeg_all.shape[0])]
         eog = self.eog_all[rng.permutation(self.eog_all.shape[0])]

@@ -267,7 +267,6 @@ def save_model_summary_csv(path, model_summaries):
 
 
 def parse_subject_ids(value):
-    """Backward-compatible alias for the shared subject-ID parser."""
     return parse_cross_subject_ids(value)
 
 
@@ -286,7 +285,7 @@ SNR_METRIC_KEYS = [
 
 
 class CrossEEGMultiSNRDataset(Dataset):
-    """Dataset of noisy EEG samples with different SNR levels."""
+    """Create EEG-EOG dataset with a specific SNR level - for evaluation"""
 
     def __init__(self, base_dataset, snr_levels, eps=1e-12):
         if not snr_levels:
@@ -324,7 +323,7 @@ def _sample_average(values):
 
 @torch.no_grad()
 def evaluate_cross_dataset_by_snr(model, loader, device, fs):
-    """Return sample-weighted CrossEEG metrics grouped by controlled SNR."""
+    """Return CrossEEG metrics grouped by controlled SNR."""
     model.eval()
     totals = {}
     counts = {}
