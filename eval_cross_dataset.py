@@ -36,39 +36,37 @@ BENCHMARK_EOG_SPECS = [
     {
         "name": "simplecnn_eog",
         "model_name": "simplecnn",
-        "ckpt_path": "runs/benchmark_compare/simplecnn_eog/best.pt",
+        "ckpt_path": "runs/cross_train/benchmarks/simplecnn_eog/best.pt",
     },
     {
         "name": "fcnn_eog",
         "model_name": "fcnn",
-        "ckpt_path": "runs/benchmark_compare/fcnn_eog/best.pt",
+        "ckpt_path": "runs/cross_train/benchmarks/fcnn_eog/best.pt",
     },
     {
         "name": "complex_cnn_eog",
         "model_name": "complexcnn",
-        "ckpt_path": "runs/benchmark_compare/complexcnn_eog/best.pt",
-        "fallback_paths": ["runs/benchmark_compare/complex_eog/best.pt"],
+        "ckpt_path": "runs/cross_train/benchmarks/complexcnn_eog/best.pt",
     },
     {
         "name": "rnn_lstm_eog",
         "model_name": "rnnlstm",
-        "ckpt_path": "runs/benchmark_compare/rnnlstm_eog/best.pt",
-        "fallback_paths": ["runs/benchmark_compare/rnn_lstm/best.pt"],
+        "ckpt_path": "runs/cross_train/benchmarks/rnnlstm_eog/best.pt",
     },
     {
         "name": "deepseparator_eog",
         "model_name": "deepseparator",
-        "ckpt_path": "runs/benchmark_compare/deepseparator_eog/best.pt",
+        "ckpt_path": "runs/cross_train/benchmarks/deepseparator_eog/best.pt",
     },
     {
         "name": "det_eog",
         "model_name": "det",
-        "ckpt_path": "runs/benchmark_compare/det_eog/best.pt",
+        "ckpt_path": "runs/cross_train/benchmarks/det_eog/best.pt",
     },
     {
         "name": "lrr_unet_eog",
         "model_name": "lrr_unet",
-        "ckpt_path": "runs/benchmark_compare/lrr_unet_eog/best.pt",
+        "ckpt_path": "runs/cross_train/benchmarks/lrr_unet_eog/best.pt",
     },
 ]
 
@@ -288,7 +286,7 @@ SNR_METRIC_KEYS = [
 
 
 class CrossEEGMultiSNRDataset(Dataset):
-    """Repeat paired CrossEEG windows with residuals scaled to exact SNRs."""
+    """Dataset of noisy EEG samples with different SNR levels."""
 
     def __init__(self, base_dataset, snr_levels, eps=1e-12):
         if not snr_levels:
@@ -510,7 +508,17 @@ def main(args):
         benchmark_summaries = []
 
         for spec in BENCHMARK_EOG_SPECS:
-            ckpt_path = resolve_existing_path(spec["ckpt_path"], spec.get("fallback_paths"))
+            if args.benchmark_checkpoint_root:
+                ckpt_path = os.path.join(
+                    args.benchmark_checkpoint_root,
+                    f"{spec['model_name']}_eog",
+                    "best.pt",
+                )
+                ckpt_path = resolve_existing_path(ckpt_path)
+            else:
+                ckpt_path = resolve_existing_path(
+                    spec["ckpt_path"], spec.get("fallback_paths")
+                )
             print(f"\n========== CROSS-DATASET EOG EVALUATION: {spec['name']} ==========")
             print(f"Checkpoint: {ckpt_path}")
 
@@ -639,7 +647,11 @@ if __name__ == "__main__":
     )
     parser.add_argument("--eval-target", type=str, default="braanet",
                         choices=["braanet", "benchmarks", "all"])
-    parser.add_argument("--ckpt-path", type=str, default="runs/braanet/EOG/best.pt")
+    parser.add_argument(
+        "--ckpt-path",
+        type=str,
+        default="runs/cross_train/braanet_eog/best.pt",
+    )
     parser.add_argument("--data-folder", type=str, default=DATA_FOLDER)
     parser.add_argument("--source-fs", type=float, default=CROSS_FS)
     parser.add_argument("--target-fs", type=float, default=None)
@@ -660,6 +672,15 @@ if __name__ == "__main__":
                         default="runs/benchmark_compare/cross_dataset_eog_eval.json")
     parser.add_argument("--benchmark-save-csv", type=str,
                         default="runs/benchmark_compare/cross_dataset_eog_eval_summary.csv")
+    parser.add_argument(
+        "--benchmark-checkpoint-root",
+        type=str,
+        default=None,
+        help=(
+            "Optional directory containing <model>_eog/best.pt baseline "
+            "checkpoints; otherwise use the built-in benchmark paths."
+        ),
+    )
     parser.add_argument(
         "--eval-by-snr",
         action="store_true",
