@@ -1,7 +1,6 @@
-# BandRouteNet
+# Beyond Reconstruction Metrics: TriX-EEG - an Explainability Evaluation Benchmark for Trustworthy EEG Artifact Removal
 
-This repository contains official implementation of the paper: ``BandRouteNet: An Adaptive Band Routing Neural Network for EEG Artifact Removal``
-
+TriX-EEG evaluates trustworthy EEG artifact removal through three complementary levels: signal validity, removal faithfulness, and explanation reliability
 
 ## Setup
 
