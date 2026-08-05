@@ -5,6 +5,8 @@ import time
 
 import torch
 
+from benchmark_models.GAN.training import StateBundle, train_gan_one_epoch
+
 from train_benchmark_EEGDenoiseNet import (
     BenchmarkTrainConfig,
     GenericDenoisingLoss,
@@ -40,6 +42,7 @@ BENCHMARK_MODEL_NAMES = [
     "deepseparator",
     "det",
     "lrr_unet",
+    "gan",
 ]
 
 
@@ -69,6 +72,11 @@ def build_benchmark_config(args, model_name, input_channels=1):
         lrr_netn_layers=args.lrr_netn_layers,
         lrr_netr_layers=args.lrr_netr_layers,
         deepseparator_indicator=args.deepseparator_indicator,
+        gan_hidden_dim=args.gan_hidden_dim,
+        gan_num_layers=args.gan_num_layers,
+        gan_tanh_output=args.gan_tanh_output,
+        gan_adversarial_weight=args.gan_adversarial_weight,
+        gan_reconstruction_weight=args.gan_reconstruction_weight,
     )
 
 
@@ -81,12 +89,32 @@ def train_model(args, model_name, splits, datasets, loaders, device):
         l1_weight=args.l1_weight,
         spectral_weight=args.spectral_weight,
     )
-    optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-        optimizer,
-        T_max=args.epochs,
-        eta_min=args.lr_min,
-    )
+    if model_name == "gan":
+        generator_optimizer = torch.optim.Adam(
+            model.model.generator.parameters(), lr=args.lr, betas=(0.5, 0.999)
+        )
+        discriminator_optimizer = torch.optim.Adam(
+            model.model.discriminator.parameters(), lr=args.lr, betas=(0.5, 0.999)
+        )
+        generator_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            generator_optimizer, T_max=args.epochs, eta_min=args.lr_min
+        )
+        discriminator_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            discriminator_optimizer, T_max=args.epochs, eta_min=args.lr_min
+        )
+        optimizer = StateBundle(
+            generator=generator_optimizer, discriminator=discriminator_optimizer
+        )
+        scheduler = StateBundle(
+            generator=generator_scheduler, discriminator=discriminator_scheduler
+        )
+    else:
+        optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer,
+            T_max=args.epochs,
+            eta_min=args.lr_min,
+        )
 
     save_dir = os.path.join(args.save_root, f"{model_name}_eog")
     os.makedirs(save_dir, exist_ok=True)
@@ -113,10 +141,23 @@ def train_model(args, model_name, splits, datasets, loaders, device):
     best_score = float("inf")
     for epoch in range(1, args.epochs + 1):
         start = time.time()
-        train_metrics = train_one_epoch(
-            model, criterion, train_loader, optimizer, device, args.grad_clip,
-            batch_adapter=cross_batch_to_device,
-        )
+        if model_name == "gan":
+            train_metrics = train_gan_one_epoch(
+                model,
+                train_loader,
+                generator_optimizer,
+                discriminator_optimizer,
+                device,
+                batch_adapter=cross_batch_to_device,
+                grad_clip=args.grad_clip,
+                adversarial_weight=args.gan_adversarial_weight,
+                reconstruction_weight=args.gan_reconstruction_weight,
+            )
+        else:
+            train_metrics = train_one_epoch(
+                model, criterion, train_loader, optimizer, device, args.grad_clip,
+                batch_adapter=cross_batch_to_device,
+            )
         val_metrics = evaluate(
             model, criterion, val_loader, device,
             batch_adapter=cross_batch_to_device,
@@ -125,7 +166,11 @@ def train_model(args, model_name, splits, datasets, loaders, device):
             model, criterion, test_loader, device,
             batch_adapter=cross_batch_to_device,
         )
-        scheduler.step()
+        if model_name == "gan":
+            generator_scheduler.step()
+            discriminator_scheduler.step()
+        else:
+            scheduler.step()
 
         history["train"].append(train_metrics)
         history["val"].append(val_metrics)
@@ -235,7 +280,7 @@ def main(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser("Train benchmark EOG denoisers on cross_data")
     parser.add_argument("--model-name", type=str, default="all",
-                        help="One of simplecnn,fcnn,complexcnn,rnnlstm,deepseparator,det,lrr_unet or all.")
+                        help="One of simplecnn,fcnn,complexcnn,rnnlstm,deepseparator,det,lrr_unet,gan or all.")
     parser.add_argument("--data-folder", type=str, default=DATA_FOLDER)
     parser.add_argument("--source-fs", type=float, default=CROSS_FS)
     parser.add_argument("--target-fs", type=float, default=256.0)
@@ -287,6 +332,12 @@ if __name__ == "__main__":
     parser.add_argument("--lrr-base-ch", type=int, default=32)
     parser.add_argument("--lrr-netn-layers", type=int, default=4)
     parser.add_argument("--lrr-netr-layers", type=int, default=4)
+
+    parser.add_argument("--gan-hidden-dim", type=int, default=50)
+    parser.add_argument("--gan-num-layers", type=int, default=2)
+    parser.add_argument("--gan-tanh-output", action="store_true")
+    parser.add_argument("--gan-adversarial-weight", type=float, default=1.0)
+    parser.add_argument("--gan-reconstruction-weight", type=float, default=1.0)
 
     parser.add_argument("--save-root", type=str, default="runs/cross_train_multichannel/benchmarks")
     main(parser.parse_args())

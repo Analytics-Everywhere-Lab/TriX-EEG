@@ -1,6 +1,5 @@
 
 # Evaluation functions
-import pandas as pd
 import torch
 import numpy as np
 from model import BRAANetV2
@@ -8,6 +7,9 @@ from configs.braanetv2_config import BRAANetV2Config
 from modules.loss import BRAALossV2
 from load_dataset import create_benchmark_dataloaders
 from train_braanet_EEGDenoiseNet import evaluate
+from train_benchmark_EEGDenoiseNet import (
+    evaluate_checkpoint_across_snrs as evaluate_benchmark_checkpoint_across_snrs,
+)
 from tqdm import tqdm
 import json
 import argparse
@@ -429,6 +431,10 @@ def evaluate_checkpoint_across_snrs(
               f"CC={metrics['cc']:.4f} | "
               f"SNRimp={metrics['snr_improvement_db']:.4f}")
 
+    # Pandas is only needed by the BRAANet report path. Keeping it lazy lets
+    # benchmark-only evaluation (including GAN) run without that dependency.
+    import pandas as pd
+
     df = pd.DataFrame(rows).sort_values("snr_db").reset_index(drop=True)
 
     if save_json_path is not None:
@@ -453,6 +459,13 @@ if __name__ == "__main__":
     args.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility")
     args.add_argument("--save_json_path", type=str, default="./test_metrics_by_snr.json", help="Path to save the detailed metrics by SNR in JSON format")
     args.add_argument("--test_snr_level", type=int, default=-2, help="SNR level to use for routing visualization")
+    args.add_argument(
+        "--benchmark_model_name",
+        type=str,
+        default=None,
+        choices=["deepseparator", "fcnn", "rnnlstm", "simplecnn", "complexcnn", "det", "lrr_unet", "gan"],
+        help="Evaluate a benchmark checkpoint instead of BRAANetV2 (includes GAN).",
+    )
     args = args.parse_args()
 
 
@@ -463,6 +476,25 @@ if __name__ == "__main__":
 
     ckpt_path = args.ckpt_path
     noise_type = args.noise_type
+
+    if args.benchmark_model_name is not None:
+        _, raw_results = evaluate_benchmark_checkpoint_across_snrs(
+            ckpt_path=ckpt_path,
+            model_name=args.benchmark_model_name,
+            eeg_array=eeg_array,
+            eog_array=eog_array,
+            emg_array=emg_array,
+            noise_type=noise_type,
+            snr_levels=[-7, -6, -5, -4, -3, -2, -1, 0, 1, 2],
+            batch_size=args.batch_size,
+            num_workers=args.num_workers,
+            seed=args.seed,
+            device=device,
+            save_json_path=args.save_json_path,
+        )
+        print("\n========== BENCHMARK CROSS-SNR RESULTS ==========")
+        print(json.dumps(raw_results, indent=2))
+        raise SystemExit(0)
 
     # Evaluate across SNRs and print summary table
     df_report, raw_results = evaluate_checkpoint_across_snrs(

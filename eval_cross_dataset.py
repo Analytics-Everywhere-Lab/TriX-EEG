@@ -68,6 +68,11 @@ BENCHMARK_EOG_SPECS = [
         "model_name": "lrr_unet",
         "ckpt_path": "runs/cross_train/benchmarks/lrr_unet_eog/best.pt",
     },
+    {
+        "name": "gan_eog",
+        "model_name": "gan",
+        "ckpt_path": "runs/cross_train/benchmarks/gan_eog/best.pt",
+    },
 ]
 
 

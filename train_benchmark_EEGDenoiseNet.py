@@ -15,6 +15,8 @@ from benchmark_models.dataset_benchmark.dataset_benchmark_models import fcNN, RN
 from benchmark_models.EEGDnet.Network_structure import DeT
 from benchmark_models.LRR_Unet.LRR_Unet import LRRUNet
 from benchmark_models.deep_separator.network import DeepSeparator
+from benchmark_models.GAN.model import EEGDeNoiseGAN
+from benchmark_models.GAN.training import StateBundle, train_gan_one_epoch
 from torch.nn import functional as F
 from torchinfo import summary
 from warnings import filterwarnings
@@ -167,6 +169,16 @@ def parse_batch(batch):
     return ensure_bct(noisy).float(), ensure_bct(clean).float(), snr, indicator
 
 
+def gan_batch_to_device(batch, device):
+    """Adapt an EEGDenoiseNet batch for the shared GAN training loop."""
+    noisy, clean, snr, _ = parse_batch(batch)
+    return (
+        noisy.to(device, non_blocking=True),
+        clean.to(device, non_blocking=True),
+        snr,
+    )
+
+
 # ============================================================
 # Metrics
 # ============================================================
@@ -256,6 +268,8 @@ class BenchmarkModelAdapter(nn.Module):
             self.model = DeT(seq_len=signal_length, patch_len=64, depth=6, heads=8, dropout=0.1, emb_dropout=0.1)
         elif self.model_name == "lrr_unet":
             self.model = LRRUNet(stages=3, channels=1, base_ch=32, netn_layers=4, netr_layers=4)
+        elif self.model_name == "gan":
+            self.model = EEGDeNoiseGAN(input_channels=input_channels)
         else:
             raise ValueError(f"Unknown model_name: {model_name}")
 
@@ -333,6 +347,9 @@ class BenchmarkModelAdapter(nn.Module):
                 "y_hat": restore(out["denoised"]),
                 **out,
             }
+
+        if self.model_name == "gan":
+            return {"y_hat": restore(self.model(x_bct))}
         
         raise RuntimeError("Unreachable branch in BenchmarkModelAdapter.forward")
 
@@ -612,6 +629,13 @@ class BenchmarkTrainConfig:
     # DeepSeparator setting
     deepseparator_indicator: str = "zeros"
 
+    # EEG-DeNoiseGAN settings
+    gan_hidden_dim: int = 50
+    gan_num_layers: int = 2
+    gan_tanh_output: bool = False
+    gan_adversarial_weight: float = 1.0
+    gan_reconstruction_weight: float = 1.0
+
 
 # ============================================================
 # Builders
@@ -642,6 +666,13 @@ def build_model(cfg: BenchmarkTrainConfig) -> nn.Module:
             base_ch=cfg.lrr_base_ch,
             netn_layers=cfg.lrr_netn_layers,
             netr_layers=cfg.lrr_netr_layers,
+        )
+    elif cfg.model_name.lower() == "gan":
+        model.model = EEGDeNoiseGAN(
+            input_channels=cfg.input_channels,
+            hidden_dim=cfg.gan_hidden_dim,
+            num_layers=cfg.gan_num_layers,
+            tanh_output=cfg.gan_tanh_output,
         )
     return model
 
@@ -694,8 +725,29 @@ def train_and_evaluate(cfg: BenchmarkTrainConfig):
         spectral_weight=cfg.spectral_weight,
     )
 
-    optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=cfg.epochs, eta_min=cfg.lr_min)
+    if cfg.model_name.lower() == "gan":
+        # The notebook uses independent Adam optimizers with GAN betas.
+        generator_optimizer = torch.optim.Adam(
+            model.model.generator.parameters(), lr=cfg.lr, betas=(0.5, 0.999)
+        )
+        discriminator_optimizer = torch.optim.Adam(
+            model.model.discriminator.parameters(), lr=cfg.lr, betas=(0.5, 0.999)
+        )
+        generator_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            generator_optimizer, T_max=cfg.epochs, eta_min=cfg.lr_min
+        )
+        discriminator_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            discriminator_optimizer, T_max=cfg.epochs, eta_min=cfg.lr_min
+        )
+        optimizer = StateBundle(
+            generator=generator_optimizer, discriminator=discriminator_optimizer
+        )
+        scheduler = StateBundle(
+            generator=generator_scheduler, discriminator=discriminator_scheduler
+        )
+    else:
+        optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=cfg.epochs, eta_min=cfg.lr_min)
 
     history = {"train": [], "val": [], "test": []}
     best_score = float("inf")
@@ -705,10 +757,27 @@ def train_and_evaluate(cfg: BenchmarkTrainConfig):
     for epoch in range(1, cfg.epochs + 1):
         t0 = time.time()
 
-        train_metrics = train_one_epoch(model, criterion, train_loader, optimizer, device, grad_clip=cfg.grad_clip)
+        if cfg.model_name.lower() == "gan":
+            train_metrics = train_gan_one_epoch(
+                model,
+                train_loader,
+                generator_optimizer,
+                discriminator_optimizer,
+                device,
+                batch_adapter=gan_batch_to_device,
+                grad_clip=cfg.grad_clip,
+                adversarial_weight=cfg.gan_adversarial_weight,
+                reconstruction_weight=cfg.gan_reconstruction_weight,
+            )
+        else:
+            train_metrics = train_one_epoch(model, criterion, train_loader, optimizer, device, grad_clip=cfg.grad_clip)
         val_metrics = evaluate(model, criterion, val_loader, device, by_snr=cfg.eval_by_snr)
         test_metrics = evaluate(model, criterion, test_loader, device, by_snr=cfg.eval_by_snr)
-        scheduler.step()
+        if cfg.model_name.lower() == "gan":
+            generator_scheduler.step()
+            discriminator_scheduler.step()
+        else:
+            scheduler.step()
 
         history["train"].append(train_metrics)
         history["val"].append(val_metrics)
@@ -799,6 +868,9 @@ def evaluate_checkpoint_one_snr(
     lrr_base_ch=32,
     lrr_netn_layers=4,
     lrr_netr_layers=4,
+    gan_hidden_dim=50,
+    gan_num_layers=2,
+    gan_tanh_output=False,
 ):
     if device is None:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -816,7 +888,23 @@ def evaluate_checkpoint_one_snr(
         lrr_base_ch=lrr_base_ch,
         lrr_netn_layers=lrr_netn_layers,
         lrr_netr_layers=lrr_netr_layers,
+        gan_hidden_dim=gan_hidden_dim,
+        gan_num_layers=gan_num_layers,
+        gan_tanh_output=gan_tanh_output,
     )
+    # Prefer architecture settings stored with the checkpoint. This is
+    # essential for non-default GAN hidden sizes/layer counts and is harmless
+    # for older checkpoints without a config mapping.
+    try:
+        checkpoint_metadata = torch.load(
+            ckpt_path, map_location="cpu", weights_only=False
+        )
+    except TypeError:
+        checkpoint_metadata = torch.load(ckpt_path, map_location="cpu")
+    for key, value in checkpoint_metadata.get("config", {}).items():
+        if hasattr(cfg, key):
+            setattr(cfg, key, value)
+    cfg.model_name = model_name
     model = build_model(cfg).to(device)
     load_checkpoint(ckpt_path, model, map_location=device)
     criterion = GenericDenoisingLoss(loss_name=loss_name, l1_weight=l1_weight, spectral_weight=spectral_weight)
@@ -938,7 +1026,7 @@ def snr_arg(v):
 
 def add_shared_args(parser: argparse.ArgumentParser):
     parser.add_argument("--model_name", type=str, required=True,
-                        choices=["deepseparator", "fcnn", "rnnlstm", "simplecnn", "complexcnn", "det", "lrr_unet", 'novelcnn'])
+                        choices=["deepseparator", "fcnn", "rnnlstm", "simplecnn", "complexcnn", "det", "lrr_unet", "gan", 'novelcnn'])
 
     parser.add_argument("--eeg_npy", type=str, default="data/EEG_all_epochs.npy")
     parser.add_argument("--eog_npy", type=str, default="data/EOG_all_epochs.npy")
@@ -974,6 +1062,13 @@ def add_shared_args(parser: argparse.ArgumentParser):
     parser.add_argument("--lrr_base_ch", type=int, default=32)
     parser.add_argument("--lrr_netn_layers", type=int, default=4)
     parser.add_argument("--lrr_netr_layers", type=int, default=4)
+
+    # EEG-DeNoiseGAN
+    parser.add_argument("--gan_hidden_dim", type=int, default=50)
+    parser.add_argument("--gan_num_layers", type=int, default=2)
+    parser.add_argument("--gan_tanh_output", type=str2bool, default=False)
+    parser.add_argument("--gan_adversarial_weight", type=float, default=1.0)
+    parser.add_argument("--gan_reconstruction_weight", type=float, default=1.0)
 
 
 def build_train_config_from_args(args) -> BenchmarkTrainConfig:
@@ -1019,6 +1114,12 @@ def build_train_config_from_args(args) -> BenchmarkTrainConfig:
         lrr_netr_layers=args.lrr_netr_layers,
 
         deepseparator_indicator=args.deepseparator_indicator,
+
+        gan_hidden_dim=args.gan_hidden_dim,
+        gan_num_layers=args.gan_num_layers,
+        gan_tanh_output=args.gan_tanh_output,
+        gan_adversarial_weight=args.gan_adversarial_weight,
+        gan_reconstruction_weight=args.gan_reconstruction_weight,
     )
 
 
@@ -1039,7 +1140,7 @@ def parser_main():
     train_parser.add_argument("--val_snr_levels", type=snr_arg, default=[-7, -6, -5, -4, -3, -2, -1, 0, 1, 2])
     train_parser.add_argument("--test_snr_levels", type=snr_arg, default=[-7, -6, -5, -4, -3, -2, -1, 0, 1, 2])
 
-    train_parser.add_argument("--epochs", type=int, default=6)
+    train_parser.add_argument("--epochs", type=int, default=15)
     train_parser.add_argument("--lr", type=float, default=1e-3)
     train_parser.add_argument("--lr_min", type=float, default=1e-6)
     train_parser.add_argument("--weight_decay", type=float, default=1e-4)
@@ -1108,6 +1209,9 @@ if __name__ == "__main__":
             lrr_base_ch=args.lrr_base_ch,
             lrr_netn_layers=args.lrr_netn_layers,
             lrr_netr_layers=args.lrr_netr_layers,
+            gan_hidden_dim=args.gan_hidden_dim,
+            gan_num_layers=args.gan_num_layers,
+            gan_tanh_output=args.gan_tanh_output,
         )
 
         print("\n========== CROSS-SNR RESULTS ==========")
