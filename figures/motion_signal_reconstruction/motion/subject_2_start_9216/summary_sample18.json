@@ -1,0 +1,81 @@
+{
+  "dataset": "MotionEEGDataset",
+  "sample_index": 18,
+  "subject_id": 2,
+  "start": 9216,
+  "sampling_rate": 256.0,
+  "scale": 60.482967376708984,
+  "mean": 0.006432005204260349,
+  "plotted_in_physical_units": true,
+  "test_subjects": [
+    2,
+    14,
+    9
+  ],
+  "methods": {
+    "BRAANet": {
+      "checkpoint": "runs/motion_train/braanet/best.pt",
+      "rrmse_temporal": 0.7441831827163696,
+      "rrmse_spectral": 0.9558137655258179,
+      "cc": 0.909487247467041,
+      "snr_improvement_db": 1.4697668552398682
+    },
+    "simplecnn": {
+      "checkpoint": "runs/motion_train/benchmarks/simplecnn/best.pt",
+      "rrmse_temporal": 1.1127536296844482,
+      "rrmse_spectral": 0.7292476892471313,
+      "cc": 0.7708264589309692,
+      "snr_improvement_db": -2.0246167182922363
+    },
+    "fcnn": {
+      "checkpoint": "runs/motion_train/benchmarks/fcnn/best.pt",
+      "rrmse_temporal": 0.844849705696106,
+      "rrmse_spectral": 0.914531946182251,
+      "cc": 0.4209015667438507,
+      "snr_improvement_db": 0.36777472496032715
+    },
+    "complexcnn": {
+      "checkpoint": "runs/motion_train/benchmarks/complexcnn/best.pt",
+      "rrmse_temporal": 1.0887107849121094,
+      "rrmse_spectral": 0.7790661454200745,
+      "cc": 0.687648594379425,
+      "snr_improvement_db": -1.8348865509033203
+    },
+    "rnnlstm": {
+      "checkpoint": "runs/motion_train/benchmarks/rnnlstm/best.pt",
+      "rrmse_temporal": 0.9118318557739258,
+      "rrmse_spectral": 0.893151044845581,
+      "cc": 0.7648071050643921,
+      "snr_improvement_db": -0.29493093490600586
+    },
+    "deepseparator": {
+      "checkpoint": "runs/motion_train/benchmarks/deepseparator/best.pt",
+      "rrmse_temporal": 0.7868036031723022,
+      "rrmse_spectral": 0.9420655369758606,
+      "cc": 0.8985428214073181,
+      "snr_improvement_db": 0.9860367774963379
+    },
+    "det": {
+      "checkpoint": "runs/motion_train/benchmarks/det/best.pt",
+      "rrmse_temporal": 0.8418617248535156,
+      "rrmse_spectral": 0.9341132640838623,
+      "cc": 0.8278397917747498,
+      "snr_improvement_db": 0.3985484838485718
+    },
+    "lrr_unet": {
+      "checkpoint": "runs/motion_train/benchmarks/lrr_unet/best.pt",
+      "rrmse_temporal": 0.871911346912384,
+      "rrmse_spectral": 0.9040305018424988,
+      "cc": 0.8828854560852051,
+      "snr_improvement_db": 0.09391772747039795
+    },
+    "gan": {
+      "checkpoint": "runs/motion_train/benchmarks/gan/best.pt",
+      "rrmse_temporal": 0.8256291151046753,
+      "rrmse_spectral": 0.8921607732772827,
+      "cc": 0.9149726629257202,
+      "snr_improvement_db": 0.5676637887954712
+    }
+  },
+  "save_dir": "figures/motion_signal_reconstruction/motion/subject_2_start_9216"
+}
