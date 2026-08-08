@@ -21,6 +21,7 @@ class TriXConfig:
     delta_snr_max: float = 20.0
     band_power_error_max: float = 1.0
     raer_error_max: float = 1.0
+    are_error_max: float = 1.0
     residual_ratio_max: float = 0.1
     taas_frequency_range: tuple[float, float] = (0.5, 45.0)
     taas_n_fft: int = 128
@@ -102,6 +103,7 @@ def evaluate_trix_model(model, loader, device, config: TriXConfig, *, descriptio
             level2_accumulator.update(level2_removal_faithfulness(
                 noisy, prediction, clean, artifact,
                 raer_error_max=config.raer_error_max,
+                are_error_max=config.are_error_max,
                 residual_ratio_max=config.residual_ratio_max,
             ))
             total_samples += noisy.shape[0]

@@ -1,8 +1,7 @@
 """Level 3: explanation reliability metrics and score (RS)."""
 
 from __future__ import annotations
-
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 
 import torch
 import torch.nn.functional as F
@@ -79,6 +78,66 @@ def smoothgrad_attribution(
     return (accumulated / float(num_samples)).detach()
 
 
+@torch.enable_grad()
+def gradient_x_input_attribution(model, noisy: torch.Tensor) -> torch.Tensor:
+    """Absolute Gradient x Input attribution for removed energy."""
+    noisy = as_bct(noisy).detach()
+    gradient = gradient_attribution(model, noisy, absolute=False)
+    return (gradient * noisy).abs().detach()
+
+
+@torch.enable_grad()
+def integrated_gradients_attribution(
+    model,
+    noisy: torch.Tensor,
+    *,
+    baseline: torch.Tensor | None = None,
+    steps: int = 32,
+) -> torch.Tensor:
+    """Absolute Integrated Gradients attribution for removed energy.
+
+    A zero signal is used as the default baseline. The integral is estimated
+    with the trapezoidal rule over ``steps`` equal intervals.
+    """
+    noisy = as_bct(noisy).detach()
+    if steps <= 0:
+        raise ValueError("steps must be positive")
+    baseline = torch.zeros_like(noisy) if baseline is None else as_bct(baseline).detach()
+    if baseline.shape != noisy.shape:
+        raise ValueError("baseline and noisy must have identical shapes")
+
+    delta = noisy - baseline
+    accumulated = torch.zeros_like(noisy)
+    for index in range(steps + 1):
+        point = baseline + (float(index) / steps) * delta
+        weight = 0.5 if index in {0, steps} else 1.0
+        accumulated += weight * gradient_attribution(model, point, absolute=False)
+    average_gradient = accumulated / float(steps)
+    return (delta * average_gradient).abs().detach()
+
+
+AttributionFn = Callable[[object, torch.Tensor, int], torch.Tensor]
+
+
+def _compute_attribution(
+    model,
+    noisy: torch.Tensor,
+    attribution_fn: AttributionFn | None,
+    seed: int,
+) -> torch.Tensor:
+    saliency = (
+        gradient_attribution(model, noisy)
+        if attribution_fn is None
+        else attribution_fn(model, noisy, int(seed))
+    )
+    saliency = as_bct(saliency).detach().abs()
+    if saliency.shape != as_bct(noisy).shape:
+        raise ValueError("Attribution map and noisy input must have identical shapes")
+    if not bool(torch.isfinite(saliency).all()):
+        raise ValueError("Attribution map contains non-finite values")
+    return saliency
+
+
 def _suppress_band(x: torch.Tensor, fs: float, low: float, high: float) -> torch.Tensor:
     x = as_bct(x)
     spectrum = torch.fft.rfft(x, dim=-1)
@@ -116,7 +175,7 @@ def causal_deletion_effects(
     *,
     saliency: torch.Tensor | None = None,
     deletion_fractions: Sequence[float] = (0.1, 0.2, 0.3),
-    random_deletion_repeats: int = 3,
+    random_deletion_repeats: int = 5,
     seed: int = 42,
     eps: float = EPS,
 ) -> dict[str, torch.Tensor]:
@@ -267,15 +326,20 @@ def level3_explanation_reliability(
     taas_n_fft: int = 128,
     taas_hop_length: int = 32,
     deletion_fractions: Sequence[float] = (0.1, 0.2, 0.3),
-    random_deletion_repeats: int = 3,
+    random_deletion_repeats: int = 5,
     stability_noise_fraction: float = 0.01,
     seed: int = 42,
     eps: float = EPS,
+    attribution_fn: AttributionFn | None = None,
+    perturbed_attribution_seed_offset: int = 0,
 ) -> dict[str, torch.Tensor]:
-    """Implement equations (24)-(38) using reproducible gradient saliency.
-
+    """
     This implementation uses absolute input gradients, soft temporal artifact
     alignment, a zero deletion baseline, and RMS-scaled Gaussian perturbations.
+    Custom stochastic attribution functions receive the same seed for the
+    original and perturbed input by default, so ASS measures input sensitivity
+    rather than Monte Carlo noise. Set ``perturbed_attribution_seed_offset``
+    when intentionally comparing independently randomized maps.
     """
     noisy, artifact = map(as_bct, (noisy, artifact))
     if noisy.shape != artifact.shape:
@@ -289,7 +353,7 @@ def level3_explanation_reliability(
         raise ValueError("Deletion fractions must be non-empty and lie in (0,1)")
 
     model.eval()
-    saliency = gradient_attribution(model, noisy)
+    saliency = _compute_attribution(model, noisy, attribution_fn, seed)
     temporal_alignment = temporal_artifact_alignment(
         saliency,
         artifact,
@@ -346,7 +410,12 @@ def level3_explanation_reliability(
         perturbation = torch.randn(
             noisy.shape, dtype=noisy.dtype, device=noisy.device, generator=generator
         ) * (stability_noise_fraction * noise_rms)
-    perturbed_saliency = gradient_attribution(model, noisy + perturbation)
+    perturbed_saliency = _compute_attribution(
+        model,
+        noisy + perturbation,
+        attribution_fn,
+        seed + int(perturbed_attribution_seed_offset),
+    )
     ass = 1.0 - (
         flatten_signal(saliency - perturbed_saliency).abs().sum(dim=-1)
         / (

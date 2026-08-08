@@ -117,7 +117,8 @@ def _write_outputs(results, output_json, output_csv, metadata):
         "dataset", "family", "model", "checkpoint", "checkpoint_epoch",
         "level1_level2_samples", "level3_samples", "ds", "fs", "rs", "tds",
         "rrmse_temporal", "rrmse_spectral", "cc", "delta_snr_db", "bps",
-        "ras", "raer", "nlr", "rar", "taas", "bac", "caf", "ass",
+        "ras", "raer", "artifact_reconstruction_error", "nlr", "rar",
+        "taas", "bac", "caf", "ass",
     ]
     with open(output_csv, "w", newline="") as stream:
         writer = csv.DictWriter(stream, fieldnames=columns)
@@ -139,7 +140,9 @@ def _write_outputs(results, output_json, output_csv, metadata):
                 **{key: level1.get(key) for key in (
                     "rrmse_temporal", "rrmse_spectral", "cc", "delta_snr_db", "bps"
                 )},
-                **{key: level2.get(key) for key in ("ras", "raer", "nlr", "rar")},
+                **{key: level2.get(key) for key in (
+                    "ras", "raer", "artifact_reconstruction_error", "nlr", "rar"
+                )},
                 **{key: level3.get(key) for key in ("taas", "bac", "caf", "ass")},
             })
 
@@ -161,6 +164,7 @@ def main(args):
         delta_snr_max=args.delta_snr_max,
         band_power_error_max=args.band_power_error_max,
         raer_error_max=args.raer_error_max,
+        are_error_max=args.are_error_max,
         residual_ratio_max=args.residual_ratio_max,
         taas_frequency_range=(args.taas_frequency_low, args.taas_frequency_high),
         taas_n_fft=args.taas_n_fft,
@@ -290,6 +294,7 @@ def build_parser():
     parser.add_argument("--delta-snr-max", type=float, default=20.0)
     parser.add_argument("--band-power-error-max", type=float, default=1.0)
     parser.add_argument("--raer-error-max", type=float, default=1.0)
+    parser.add_argument("--are-error-max", type=float, default=1.0)
     parser.add_argument("--residual-ratio-max", type=float, default=0.1)
     parser.add_argument("--taas-frequency-low", type=float, default=0.5)
     parser.add_argument("--taas-frequency-high", type=float, default=45.0)
