@@ -25,7 +25,12 @@ from load_dataset import (
     MOTION_EEG_SOURCE_FS,
     MOTION_EEG_TARGET_FS,
 )
-from trix_eeg.evaluator import TriXConfig, evaluate_trix_model
+from trix_eeg.evaluator import (
+    TriXConfig,
+    evaluate_trix_model,
+    evaluate_trix_model_multiseed,
+)
+from trix_eeg.aggregation import AGGREGATION_CHOICES, LEGACY_AGGREGATION
 
 
 BENCHMARK_NAMES = (
@@ -113,13 +118,26 @@ def _write_outputs(results, output_json, output_csv, metadata):
     with open(output_json, "w") as stream:
         json.dump({"metadata": metadata, "results": results}, stream, indent=2)
 
-    columns = [
+    identity_columns = [
         "dataset", "family", "model", "checkpoint", "checkpoint_epoch",
-        "level1_level2_samples", "level3_samples", "ds", "fs", "rs", "tds",
+        "level1_level2_samples", "level3_samples", "aggregation",
+    ]
+    score_columns = [
+        "ds", "fs", "rs", "tds",
+        "ds_legacy_arithmetic", "fs_legacy_arithmetic",
+        "rs_legacy_arithmetic", "tds_legacy_arithmetic",
+    ]
+    metric_columns = [
         "rrmse_temporal", "rrmse_spectral", "cc", "delta_snr_db", "bps",
         "ras", "raer", "artifact_reconstruction_error", "nlr", "rar",
         "taas", "bac", "caf", "ass",
     ]
+    stochastic_columns = [
+        "rs", "tds", "rs_legacy_arithmetic", "tds_legacy_arithmetic",
+        "taas", "bac", "caf", "ass",
+    ]
+    columns = identity_columns + score_columns + metric_columns
+    columns += [f"{name}_std" for name in stochastic_columns]
     with open(output_csv, "w", newline="") as stream:
         writer = csv.DictWriter(stream, fieldnames=columns)
         writer.writeheader()
@@ -128,7 +146,10 @@ def _write_outputs(results, output_json, output_csv, metadata):
             level1 = evaluation["level1_signal_validity"]
             level2 = evaluation["level2_removal_faithfulness"]
             level3 = evaluation["level3_explanation_reliability"]
-            writer.writerow({
+            evaluation_std = result.get("evaluation_std", {})
+            level3_std = evaluation_std.get("level3_explanation_reliability", {})
+            score_std = evaluation_std.get("scores", {})
+            values = {
                 "dataset": result["dataset"],
                 "family": result["family"],
                 "model": result["model"],
@@ -144,7 +165,13 @@ def _write_outputs(results, output_json, output_csv, metadata):
                     "ras", "raer", "artifact_reconstruction_error", "nlr", "rar"
                 )},
                 **{key: level3.get(key) for key in ("taas", "bac", "caf", "ass")},
-            })
+            }
+            std_groups = (score_std, level3_std)
+            for name in stochastic_columns:
+                values[f"{name}_std"] = next(
+                    (group[name] for group in std_groups if name in group), 0.0
+                )
+            writer.writerow(values)
 
 
 def main(args):
@@ -160,6 +187,7 @@ def main(args):
         "cuda" if torch.cuda.is_available() and not args.cpu else "cpu"
     )
     config = TriXConfig(
+        aggregation=args.aggregation,
         fs=args.fs,
         delta_snr_max=args.delta_snr_max,
         band_power_error_max=args.band_power_error_max,
@@ -208,10 +236,17 @@ def main(args):
                         f"Checkpoint signal length {model_config.signal_length} != "
                         f"evaluation length {args.signal_length}"
                     )
-                evaluation = evaluate_trix_model(
-                    model, loader, device, config,
-                    description=f"{dataset_name}/{name}",
-                )
+                if args.evaluation_seeds:
+                    evaluation, evaluation_std = evaluate_trix_model_multiseed(
+                        model, loader, device, config, args.evaluation_seeds,
+                        description=f"{dataset_name}/{name}",
+                    )
+                else:
+                    evaluation = evaluate_trix_model(
+                        model, loader, device, config,
+                        description=f"{dataset_name}/{name}",
+                    )
+                    evaluation_std = None
                 result = {
                     "dataset": dataset_name,
                     "family": family,
@@ -221,6 +256,8 @@ def main(args):
                     **extra_metadata,
                     "evaluation": evaluation,
                 }
+                if evaluation_std is not None:
+                    result["evaluation_std"] = evaluation_std
                 results.append(result)
                 scores = evaluation["scores"]
                 print(
@@ -256,6 +293,12 @@ def main(args):
         "datasets": args.datasets,
         "snr_levels": args.snr_levels,
         "framework_settings": config.__dict__,
+        "evaluation_seeds": args.evaluation_seeds,
+        "uncertainty_scope": (
+            "fixed dataset split/checkpoints; five seeded stratified Level-3 "
+            "subsets with one matched stochastic-operation seed per subset"
+            if args.evaluation_seeds else "single evaluation seed"
+        ),
         "failures": failures,
     }
     _write_outputs(results, args.output_json, args.output_csv, metadata)
@@ -289,9 +332,20 @@ def build_parser():
     parser.add_argument("--batch-size", type=int, default=64)
     parser.add_argument("--num-workers", type=int, default=0)
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument(
+        "--evaluation-seeds", nargs="+", type=int, default=None,
+        help=("Evaluate Level 3 on one seeded stratified subset per value, using "
+              "the same value as its stochastic-operation seed; report mean/SD."),
+    )
     parser.add_argument("--cpu", action="store_true")
     parser.add_argument("--skip-failed", action="store_true")
     parser.add_argument("--delta-snr-max", type=float, default=20.0)
+    parser.add_argument(
+        "--aggregation",
+        choices=AGGREGATION_CHOICES,
+        default=LEGACY_AGGREGATION,
+        help="Level-score aggregation version; legacy remains the default.",
+    )
     parser.add_argument("--band-power-error-max", type=float, default=1.0)
     parser.add_argument("--raer-error-max", type=float, default=1.0)
     parser.add_argument("--are-error-max", type=float, default=1.0)
@@ -307,7 +361,7 @@ def build_parser():
     parser.add_argument("--stability-noise-fraction", type=float, default=0.01)
     parser.add_argument(
         "--level3-max-samples", type=int, default=64,
-        help="Uniform explanation subset size; <=0 evaluates every window.",
+        help="Stratified explanation subset size per seed; <=0 evaluates all windows.",
     )
     parser.add_argument("--level3-batch-size", type=int, default=8)
     parser.add_argument("--weights", nargs=3, type=float, default=[1.0, 1.0, 1.0])
