@@ -1,6 +1,6 @@
 # TriX-EEG implementation
 
-This directory implements all equations in `TriX_EEG_Draft_v3.pdf` as
+This directory implements all equations of `Trix-EEG`framework as
 sample-wise metrics. Dataset summaries are macro means over windows, and the
 final TDS is the geometric mean of the three summarized level scores.
 
@@ -39,7 +39,7 @@ fixing them. The runner records these choices in every JSON result. Defaults:
 - TAAS = 128-sample Hann STFT frames with a 32-sample hop over 0.5-45 Hz
 - attribution = absolute gradient of `||y - f(y)||^2` with respect to input
 - BAC band suppression = FFT-bin deletion for 0.5-45 Hz neural bands
-- CAF = zero-baseline deletion at 10%, 20%, and 30%, with three matched random
+- CAF = zero-baseline deletion at 10%, 20%, 30%, 50% and 80% with three matched random
   deletions per percentage
 - ASS perturbation = zero-mean Gaussian noise at 1% of input RMS
 
@@ -51,9 +51,12 @@ Run every requested checkpoint and dataset:
 python evaluate_trix_eeg.py --cpu
 ```
 
-Levels 1-2 use the complete held-out dataset. Level 3 defaults to a uniformly
-spaced 64-window subset because it requires gradients and many model
-interventions. Use `--level3-max-samples 0` for every held-out window.
+Levels 1-2 use the complete held-out dataset. Level 3 defaults to a seeded,
+stratified 64-window subset because it requires gradients and many model
+interventions. EEGDenoiseNet subsets are balanced over SNR; motion subsets are
+balanced over test trial. With `--evaluation-seeds`, each seed selects a new
+subset and controls its matched stochastic operations. Identical seeds give all
+models identical paired subsets. Use `--level3-max-samples 0` for every window.
 
 Calculate a final score independently:
 
@@ -63,6 +66,24 @@ python -m trix_eeg.final_score 0.8 0.7 0.6
 
 The runner writes a complete machine-readable JSON file and a flat CSV summary
 under `runs/trix_eeg/` by default.
+
+## Aggregation policy
+
+TriX-EEG uses one fixed aggregation policy. Component utilities are averaged
+arithmetically within each level, and the three level scores are combined by a
+geometric mean:
+
+```text
+DS = mean(U_RRMSE-T, U_RRMSE-S, U_CC, U_delta-SNR, BPS)
+FS = mean(RAS, U_RAER, U_ARE, U_NLR, U_RAR)
+RS = mean(TAAS, BAC, CAF, ASS)
+TDS = GM(DS, FS, RS)
+```
+
+The command-line value `--aggregation legacy_arithmetic` remains accepted for
+backward compatibility. No alternative level-score aggregation is supported.
+Artifact-normalized Level-2 scores remain inapplicable when the artifact
+reference is zero.
 
 ## Metric sanity experiments
 
@@ -93,7 +114,8 @@ python -m sanity_checks.wrong_artifact_pairing --dataset eeg_eog \
 
 Use `--family benchmark --model det` (or another benchmark name) to select a
 benchmark checkpoint. `--checkpoint PATH` overrides automatic checkpoint
-resolution. `--max-samples N` makes a deterministic uniform subset for a quick
+resolution. Level-3 checks use `--max-samples N` as a seeded stratified subset;
+Level-1/2-only checks retain a deterministic uniform subset for a quick
 run; a value of zero uses the complete test set. Level-3 experiments default to
 64 samples because SmoothGrad and Integrated Gradients require repeated forward
 and backward passes.
@@ -105,6 +127,20 @@ artifact pairing does not change it. The wrong-pairing script reports both raw
 donor artifacts and RMS-matched donors, allowing morphology sensitivity to be
 separated from an artifact-energy mismatch.
 
+Every result also includes a `metric_scope` metadata block that identifies the
+manipulated input, affected metrics grouped by level, and intentionally omitted
+invariants. After running all six checks for the three datasets, generate the
+dependency-aware report with:
+
+```bash
+python -m sanity_checks.generate_levelwise_report \
+  --input-dir runs/sanity_checks/eegdnet_are \
+  --model-label EEGDNet
+```
+
+The generated `REPORT_LEVELWISE.md` reports only metrics that consume the input
+changed by each sanity experiment.
+
 Plot the Level-3 TAAS, BAC, CAF, and ASS comparisons:
 
 ```bash
@@ -114,6 +150,33 @@ python visualization/plot_trix_level3_metrics.py
 This writes an all-dataset overview and one detailed PNG/PDF pair per dataset
 under `figures/trix_eeg/`. Use `--datasets motion` or `--models braanet det gan`
 to plot a subset.
+
+Visualize the updated Level-2 Faithfulness Score and its five normalized
+components across every model and dataset:
+
+```bash
+python visualization/plot_trix_level2_metrics.py
+```
+
+The paper-oriented dashboard reads `runs/trix_eeg_are/trix_eeg_results.json`
+and writes PNG/PDF output to `figures/trix_eeg_are/level2/`. It places FS
+rankings beside an annotated RAS/RAER/ARE/NLR/RAR utility heatmap. All cells
+are on the same [0, 1], higher-is-better scale. Use `--datasets`, `--models`,
+or `--sort-models declared` to customize the comparison.
+
+Generate alternative parallel-profile visualizations for the metrics at all
+three levels:
+
+```bash
+python visualization/plot_trix_metric_profiles.py
+```
+
+This reads the ARE-extended JSON results and writes separate paper-scale
+Level-1, Level-2, and Level-3 PNG/PDF figures under
+`figures/trix_eeg_are/metric_profiles/`. The aggregate DS, FS, or RS column is
+visually separated from its components, and the best value at each metric is
+annotated in the winning model's color. Use `--levels 1`, `--levels 2`, or
+`--levels 3` to generate only selected levels.
 
 Compare the three level scores using model-wise radar charts:
 

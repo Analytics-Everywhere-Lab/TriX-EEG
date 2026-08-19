@@ -6,6 +6,11 @@ from collections.abc import Callable, Sequence
 import torch
 import torch.nn.functional as F
 
+from .aggregation import (
+    LEGACY_AGGREGATION,
+    validate_aggregation,
+)
+
 from .common import (
     EPS,
     NEURAL_BANDS,
@@ -48,6 +53,7 @@ def smoothgrad_attribution(
     num_samples: int = 32,
     noise_fraction: float = 0.1,
     seed: int = 42,
+    gradient_batch_size: int | None = None,
 ) -> torch.Tensor:
     """Average absolute gradients over RMS-scaled Gaussian perturbations.
 
@@ -74,7 +80,17 @@ def smoothgrad_attribution(
             device=noisy.device,
             generator=generator,
         ) * noise_scale
-        accumulated += gradient_attribution(model, noisy + perturbation)
+        perturbed = noisy + perturbation
+        if gradient_batch_size is None or gradient_batch_size >= noisy.shape[0]:
+            accumulated += gradient_attribution(model, perturbed)
+        else:
+            if gradient_batch_size <= 0:
+                raise ValueError("gradient_batch_size must be positive")
+            gradients = [
+                gradient_attribution(model, perturbed[start:start + gradient_batch_size])
+                for start in range(0, noisy.shape[0], gradient_batch_size)
+            ]
+            accumulated += torch.cat(gradients, dim=0)
     return (accumulated / float(num_samples)).detach()
 
 
@@ -93,6 +109,7 @@ def integrated_gradients_attribution(
     *,
     baseline: torch.Tensor | None = None,
     steps: int = 32,
+    gradient_batch_size: int | None = None,
 ) -> torch.Tensor:
     """Absolute Integrated Gradients attribution for removed energy.
 
@@ -111,7 +128,18 @@ def integrated_gradients_attribution(
     for index in range(steps + 1):
         point = baseline + (float(index) / steps) * delta
         weight = 0.5 if index in {0, steps} else 1.0
-        accumulated += weight * gradient_attribution(model, point, absolute=False)
+        if gradient_batch_size is None or gradient_batch_size >= noisy.shape[0]:
+            gradient = gradient_attribution(model, point, absolute=False)
+        else:
+            if gradient_batch_size <= 0:
+                raise ValueError("gradient_batch_size must be positive")
+            gradient = torch.cat([
+                gradient_attribution(
+                    model, point[start:start + gradient_batch_size], absolute=False
+                )
+                for start in range(0, noisy.shape[0], gradient_batch_size)
+            ], dim=0)
+        accumulated += weight * gradient
     average_gradient = accumulated / float(steps)
     return (delta * average_gradient).abs().detach()
 
@@ -332,6 +360,7 @@ def level3_explanation_reliability(
     eps: float = EPS,
     attribution_fn: AttributionFn | None = None,
     perturbed_attribution_seed_offset: int = 0,
+    aggregation: str = LEGACY_AGGREGATION,
 ) -> dict[str, torch.Tensor]:
     """
     This implementation uses absolute input gradients, soft temporal artifact
@@ -341,6 +370,7 @@ def level3_explanation_reliability(
     rather than Monte Carlo noise. Set ``perturbed_attribution_seed_offset``
     when intentionally comparing independently randomized maps.
     """
+    validate_aggregation(aggregation)
     noisy, artifact = map(as_bct, (noisy, artifact))
     if noisy.shape != artifact.shape:
         raise ValueError("noisy and artifact must have identical shapes")
@@ -431,6 +461,7 @@ def level3_explanation_reliability(
         "bac": bac.detach(),
         "caf": caf.detach(),
         "ass": ass.detach(),
+        "rs_legacy_arithmetic": rs.detach(),
         "rs": rs.detach(),
     }
     for index, fraction in enumerate(fractions):

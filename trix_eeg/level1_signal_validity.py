@@ -4,6 +4,11 @@ from __future__ import annotations
 
 import torch
 
+from .aggregation import (
+    LEGACY_AGGREGATION,
+    validate_aggregation,
+)
+
 from .common import (
     EPS,
     NEURAL_BANDS,
@@ -28,8 +33,10 @@ def level1_signal_validity(
     band_power_error_max: float = 1.0,
     bands=NEURAL_BANDS,
     eps: float = EPS,
+    aggregation: str = LEGACY_AGGREGATION,
 ) -> dict[str, torch.Tensor]:
     """Implement equations (3)-(13), returning one value per input window."""
+    validate_aggregation(aggregation)
     noisy, prediction, clean = map(as_bct, (noisy, prediction, clean))
     if not (noisy.shape == prediction.shape == clean.shape):
         raise ValueError("noisy, prediction, and clean must have identical shapes")
@@ -86,6 +93,7 @@ def level1_signal_validity(
         "utility_rrmse_spectral": utility_rrmse_s,
         "utility_cc": utility_cc,
         "utility_delta_snr": utility_delta_snr,
+        "ds_legacy_arithmetic": ds,
         "ds": ds,
     }
     for index, name in enumerate(bands):

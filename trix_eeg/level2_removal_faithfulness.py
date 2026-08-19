@@ -4,6 +4,11 @@ from __future__ import annotations
 
 import torch
 
+from .aggregation import (
+    LEGACY_AGGREGATION,
+    validate_aggregation,
+)
+
 from .common import EPS, as_bct, correlation, flatten_signal
 
 
@@ -18,8 +23,10 @@ def level2_removal_faithfulness(
     are_error_max: float = 1.0,
     residual_ratio_max: float = 0.1,
     eps: float = EPS,
+    aggregation: str = LEGACY_AGGREGATION,
 ) -> dict[str, torch.Tensor]:
     """Return Level-2 metrics, ARE extension, and five-component FS."""
+    validate_aggregation(aggregation)
     noisy, prediction, clean = map(as_bct, (noisy, prediction, clean))
     artifact = noisy - clean if artifact is None else as_bct(artifact)
     if not (noisy.shape == prediction.shape == clean.shape == artifact.shape):
@@ -84,5 +91,6 @@ def level2_removal_faithfulness(
         "utility_nlr": utility_nlr,
         "rar": rar,
         "utility_rar": utility_rar,
+        "fs_legacy_arithmetic": fs,
         "fs": fs,
     }

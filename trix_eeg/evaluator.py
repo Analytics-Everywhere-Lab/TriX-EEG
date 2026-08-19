@@ -3,20 +3,24 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+import statistics
 
 import torch
 from torch.utils.data import DataLoader, Subset
 from tqdm import tqdm
 
 from .common import as_bct, predict
+from .aggregation import LEGACY_AGGREGATION, validate_aggregation
 from .final_score import final_trix_score
 from .level1_signal_validity import level1_signal_validity
 from .level2_removal_faithfulness import level2_removal_faithfulness
 from .level3_explanation_reliability import level3_explanation_reliability
+from .sampling import stratified_subset_indices
 
 
 @dataclass
 class TriXConfig:
+    aggregation: str = LEGACY_AGGREGATION
     fs: float = 256.0
     delta_snr_max: float = 20.0
     band_power_error_max: float = 1.0
@@ -66,28 +70,26 @@ def _signals_from_batch(batch, device):
     return noisy, clean, artifact
 
 
-def _explanation_loader(loader, config: TriXConfig):
+def _explanation_loader(loader, config: TriXConfig, subset_seed: int):
     dataset = loader.dataset
-    requested = len(dataset) if config.level3_max_samples <= 0 else min(
-        len(dataset), config.level3_max_samples
+    indices = stratified_subset_indices(
+        dataset, config.level3_max_samples, subset_seed
     )
-    if requested == len(dataset):
+    if len(indices) == len(dataset):
         subset = dataset
     else:
-        indices = torch.linspace(0, len(dataset) - 1, requested).round().long().tolist()
         subset = Subset(dataset, indices)
-    return DataLoader(
+    explanation_loader = DataLoader(
         subset,
         batch_size=config.level3_batch_size,
         shuffle=False,
         num_workers=0,
         pin_memory=loader.pin_memory,
     )
+    return explanation_loader, indices
 
 
-def evaluate_trix_model(model, loader, device, config: TriXConfig, *, description="TriX"):
-    """Evaluate Level 1/2 on all windows and Level 3 on a fixed uniform subset."""
-    model.eval()
+def _evaluate_level1_level2(model, loader, device, config, description):
     level1_accumulator = _MetricAccumulator()
     level2_accumulator = _MetricAccumulator()
     total_samples = 0
@@ -99,19 +101,25 @@ def evaluate_trix_model(model, loader, device, config: TriXConfig, *, descriptio
                 noisy, prediction, clean, fs=config.fs,
                 delta_snr_max=config.delta_snr_max,
                 band_power_error_max=config.band_power_error_max,
+                aggregation=config.aggregation,
             ))
             level2_accumulator.update(level2_removal_faithfulness(
                 noisy, prediction, clean, artifact,
                 raer_error_max=config.raer_error_max,
                 are_error_max=config.are_error_max,
                 residual_ratio_max=config.residual_ratio_max,
+                aggregation=config.aggregation,
             ))
             total_samples += noisy.shape[0]
+    return level1_accumulator.means(), level2_accumulator.means(), total_samples
 
+
+def _evaluate_level3(model, loader, device, config, description, seed):
     level3_accumulator = _MetricAccumulator()
     explanation_samples = 0
+    explanation_loader, subset_indices = _explanation_loader(loader, config, seed)
     for batch_index, batch in enumerate(tqdm(
-        _explanation_loader(loader, config), desc=f"{description} L3", leave=False
+        explanation_loader, desc=f"{description} L3", leave=False
     )):
         noisy, _, artifact = _signals_from_batch(batch, device)
         level3_accumulator.update(level3_explanation_reliability(
@@ -122,22 +130,125 @@ def evaluate_trix_model(model, loader, device, config: TriXConfig, *, descriptio
             deletion_fractions=config.deletion_fractions,
             random_deletion_repeats=config.random_deletion_repeats,
             stability_noise_fraction=config.stability_noise_fraction,
-            seed=config.seed + batch_index,
+            seed=seed + batch_index,
+            aggregation=config.aggregation,
         ))
         explanation_samples += noisy.shape[0]
+    return level3_accumulator.means(), explanation_samples, subset_indices
 
-    level1 = level1_accumulator.means()
-    level2 = level2_accumulator.means()
-    level3 = level3_accumulator.means()
+
+def _scores(level1, level2, level3, config):
     tds = final_trix_score(
         level1["ds"], level2["fs"], level3["rs"], weights=config.weights
     )
+    tds_legacy = final_trix_score(
+        level1["ds_legacy_arithmetic"],
+        level2["fs_legacy_arithmetic"],
+        level3["rs_legacy_arithmetic"],
+        weights=config.weights,
+    )
+    return {
+        "aggregation": config.aggregation,
+        "ds": level1["ds"], "fs": level2["fs"], "rs": level3["rs"],
+        "tds": tds,
+        "ds_legacy_arithmetic": level1["ds_legacy_arithmetic"],
+        "fs_legacy_arithmetic": level2["fs_legacy_arithmetic"],
+        "rs_legacy_arithmetic": level3["rs_legacy_arithmetic"],
+        "tds_legacy_arithmetic": tds_legacy,
+    }
+
+
+def evaluate_trix_model(model, loader, device, config: TriXConfig, *, description="TriX"):
+    """Evaluate Level 1/2 fully and Level 3 on one seeded stratified subset."""
+    model.eval()
+    validate_aggregation(config.aggregation)
+    level1, level2, total_samples = _evaluate_level1_level2(
+        model, loader, device, config, description
+    )
+    level3, explanation_samples, subset_indices = _evaluate_level3(
+        model, loader, device, config, description, config.seed
+    )
+
     return {
         "num_samples_level1_level2": total_samples,
         "num_samples_level3": explanation_samples,
+        "level3_subset_indices": subset_indices,
         "level1_signal_validity": level1,
         "level2_removal_faithfulness": level2,
         "level3_explanation_reliability": level3,
-        "scores": {"ds": level1["ds"], "fs": level2["fs"], "rs": level3["rs"], "tds": tds},
+        "scores": _scores(level1, level2, level3, config),
         "settings": asdict(config),
     }
+
+
+def _summarize_dicts(records):
+    means, stds = {}, {}
+    common_names = set.intersection(*(set(record) for record in records))
+    for name in sorted(common_names):
+        values = [record[name] for record in records]
+        if all(isinstance(value, (int, float, bool)) for value in values):
+            numeric = [float(value) for value in values]
+            means[name] = statistics.mean(numeric)
+            stds[name] = statistics.stdev(numeric) if len(numeric) > 1 else 0.0
+        elif len(set(map(str, values))) == 1:
+            means[name] = values[0]
+    return means, stds
+
+
+def evaluate_trix_model_multiseed(
+    model, loader, device, config: TriXConfig, seeds, *, description="TriX"
+):
+    """Repeat Level 3 over seeded, stratified subsets of one fixed test split.
+
+    Level 1 and Level 2 are deterministic for fixed inputs/checkpoints, so they are
+    evaluated once and are not assigned uncertainty fields. Level 3 and the
+    resulting TDS are summarized with the mean and sample standard deviation over
+    ``seeds``. Each seed controls both subset selection and stochastic operations;
+    using the same seeds across models produces paired comparisons.
+    """
+    seeds = tuple(int(seed) for seed in seeds)
+    if len(seeds) < 2:
+        raise ValueError("Multi-seed evaluation requires at least two seeds")
+    model.eval()
+    validate_aggregation(config.aggregation)
+    level1, level2, total_samples = _evaluate_level1_level2(
+        model, loader, device, config, description
+    )
+    level3_runs, score_runs = [], []
+    subset_indices_by_seed = {}
+    explanation_samples = None
+    for seed in seeds:
+        level3, current_samples, subset_indices = _evaluate_level3(
+            model, loader, device, config, f"{description} seed={seed}", seed
+        )
+        if explanation_samples is not None and current_samples != explanation_samples:
+            raise RuntimeError("Level-3 sample count changed across seeds")
+        explanation_samples = current_samples
+        subset_indices_by_seed[str(seed)] = subset_indices
+        level3_runs.append(level3)
+        score_runs.append(_scores(level1, level2, level3, config))
+
+    level3_mean, level3_std = _summarize_dicts(level3_runs)
+    scores_mean, scores_std = _summarize_dicts(score_runs)
+    stochastic_score_std = {
+        name: value for name, value in scores_std.items()
+        if name == "rs" or name == "tds"
+        or name.startswith("rs_") or name.startswith("tds_")
+    }
+    settings = asdict(config)
+    settings["evaluation_seeds"] = list(seeds)
+    evaluation = {
+        "num_samples_level1_level2": total_samples,
+        "num_samples_level3": explanation_samples,
+        "level3_subset_indices_by_seed": subset_indices_by_seed,
+        "level1_signal_validity": level1,
+        "level2_removal_faithfulness": level2,
+        "level3_explanation_reliability": level3_mean,
+        "scores": scores_mean,
+        "settings": settings,
+    }
+    evaluation_std = {
+        "level3_explanation_reliability": level3_std,
+        "scores": stochastic_score_std,
+    }
+    return evaluation, evaluation_std
