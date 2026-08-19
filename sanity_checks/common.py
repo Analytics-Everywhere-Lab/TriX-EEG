@@ -26,7 +26,9 @@ from load_dataset import (
     MOTION_EEG_TARGET_FS,
 )
 from trix_eeg.common import as_bct
+from trix_eeg.aggregation import AGGREGATION_CHOICES, LEGACY_AGGREGATION
 from trix_eeg.evaluator import TriXConfig
+from trix_eeg.sampling import stratified_subset
 from model import BRAANetV2
 from train_benchmark_EEGDenoiseNet import BenchmarkTrainConfig, build_model
 
@@ -102,10 +104,20 @@ def add_common_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--max-samples", type=int, default=0,
                         help="Uniform subset size; <=0 uses the entire test set.")
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument(
+        "--data-seed", type=int, default=None,
+        help="Fix the benchmark split independently of the stochastic --seed.",
+    )
     parser.add_argument("--cpu", action="store_true")
 
 
 def add_metric_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--aggregation",
+        choices=AGGREGATION_CHOICES,
+        default=LEGACY_AGGREGATION,
+        help="Level-score aggregation version; legacy remains the default.",
+    )
     parser.add_argument("--delta-snr-max", type=float, default=20.0)
     parser.add_argument("--band-power-error-max", type=float, default=1.0)
     parser.add_argument("--raer-error-max", type=float, default=1.0)
@@ -123,6 +135,7 @@ def add_metric_arguments(parser: argparse.ArgumentParser) -> None:
 
 def make_config(args) -> TriXConfig:
     return TriXConfig(
+        aggregation=args.aggregation,
         fs=args.fs,
         delta_snr_max=args.delta_snr_max,
         band_power_error_max=args.band_power_error_max,
@@ -143,6 +156,7 @@ def make_config(args) -> TriXConfig:
 
 def build_dataset(args, dataset_name: str | None = None):
     name = args.dataset if dataset_name is None else dataset_name
+    data_seed = args.seed if args.data_seed is None else args.data_seed
     if name in {"eeg_eog", "eeg_emg"}:
         noise_type = "EOG" if name == "eeg_eog" else "EMG"
         eeg = np.load(args.eeg_npy)
@@ -154,7 +168,7 @@ def build_dataset(args, dataset_name: str | None = None):
             train_snr_levels=args.snr_levels,
             val_snr_levels=args.snr_levels,
             test_snr_levels=args.snr_levels,
-            seed=args.seed,
+            seed=data_seed,
             **kwargs,
         )[2]
     if name == "motion":
@@ -167,7 +181,7 @@ def build_dataset(args, dataset_name: str | None = None):
             no_normalize=args.no_motion_normalize,
             train_ratio=args.motion_train_ratio,
             val_ratio=args.motion_val_ratio,
-            seed=args.seed,
+            seed=data_seed,
         )
         _, _, test_ids = make_motion_splits(motion_args)
         return make_motion_dataset(motion_args, test_ids)
@@ -181,10 +195,17 @@ def uniform_subset(dataset, max_samples: int):
     return Subset(dataset, indices)
 
 
-def make_loader(dataset, args, *, max_samples: int | None = None) -> DataLoader:
+def make_loader(
+    dataset, args, *, max_samples: int | None = None, subset_seed: int | None = None
+) -> DataLoader:
     sample_limit = args.max_samples if max_samples is None else max_samples
+    selected = (
+        uniform_subset(dataset, sample_limit)
+        if subset_seed is None
+        else stratified_subset(dataset, sample_limit, subset_seed)
+    )
     return DataLoader(
-        uniform_subset(dataset, sample_limit),
+        selected,
         batch_size=args.batch_size,
         shuffle=False,
         num_workers=args.num_workers,
@@ -289,6 +310,7 @@ def base_metadata(args, model_metadata: dict | None = None) -> dict:
 
 def level3_kwargs(config: TriXConfig) -> dict:
     return {
+        "aggregation": config.aggregation,
         "fs": config.fs,
         "taas_frequency_range": config.taas_frequency_range,
         "taas_n_fft": config.taas_n_fft,
@@ -301,3 +323,27 @@ def level3_kwargs(config: TriXConfig) -> dict:
 
 def metric_record(condition: str, metrics: dict[str, float], **extra) -> dict:
     return {"condition": condition, **extra, **metrics}
+
+
+def add_metric_scope(
+    metadata: dict,
+    *,
+    manipulated_inputs: list[str],
+    reported_by_level: dict[str, list[str]],
+    omitted_invariants: dict[str, str] | None = None,
+) -> None:
+    """Document why a sanity check reports a specific subset of metrics.
+
+    A metric belongs in a sanity-check result only when it consumes an input
+    changed by that check. This prevents unchanged metrics from being mistaken
+    for failed sanity checks and gives report generators an explicit level-wise
+    schema instead of inferring dependencies from column names.
+    """
+    metadata["metric_scope"] = {
+        "selection_rule": (
+            "Report only metrics that consume at least one manipulated input."
+        ),
+        "manipulated_inputs": manipulated_inputs,
+        "reported_by_level": reported_by_level,
+        "omitted_invariants": omitted_invariants or {},
+    }

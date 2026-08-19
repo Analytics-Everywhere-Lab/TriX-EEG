@@ -10,6 +10,7 @@ from tqdm import tqdm
 
 from sanity_checks.common import (
     MetricAccumulator,
+    add_metric_scope,
     add_common_arguments,
     add_metric_arguments,
     base_metadata,
@@ -43,12 +44,14 @@ def main(args) -> None:
                 clean, prediction, clean, fs=args.fs,
                 delta_snr_max=args.delta_snr_max,
                 band_power_error_max=args.band_power_error_max,
+                aggregation=args.aggregation,
             )
             level2 = level2_removal_faithfulness(
                 clean, prediction, clean, zero_artifact,
                 raer_error_max=args.raer_error_max,
                 are_error_max=args.are_error_max,
                 residual_ratio_max=args.residual_ratio_max,
+                aggregation=args.aggregation,
             )
             removed = clean - prediction
             diagnostics = {
@@ -60,7 +63,8 @@ def main(args) -> None:
             }
             accumulator.update({
                 **{f"l1_{key}": level1[key] for key in (
-                    "rrmse_temporal", "rrmse_spectral", "cc", "bps", "ds"
+                    "rrmse_temporal", "rrmse_spectral", "cc", "delta_snr_db",
+                    "macro_band_power_error", "bps", "ds",
                 )},
                 "l2_nlr": level2["nlr"],
                 "l2_utility_nlr": level2["utility_nlr"],
@@ -68,6 +72,24 @@ def main(args) -> None:
             })
 
     metadata = base_metadata(args, model_metadata)
+    add_metric_scope(
+        metadata,
+        manipulated_inputs=["model_input_clean_instead_of_noisy", "zero_artifact"],
+        reported_by_level={
+            "level1": [
+                "rrmse_temporal", "rrmse_spectral", "cc", "delta_snr_db",
+                "macro_band_power_error", "bps", "ds",
+            ],
+            "level2": ["nlr", "utility_nlr"],
+            "diagnostic": ["removed_l2", "removed_relative_l2"],
+        },
+        omitted_invariants={
+            "level2.artifact_required": (
+                "RAS, RAER, ARE, RAR, and FS are undefined or misleading when artifact=0."
+            ),
+            "level3": "No attribution input is manipulated by this check.",
+        },
+    )
     metadata["expected_behavior"] = {
         "l1_ds": "high",
         "removed_l2_and_relative_l2": "very low",

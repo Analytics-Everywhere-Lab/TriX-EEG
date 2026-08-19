@@ -10,6 +10,7 @@ from tqdm import tqdm
 
 from sanity_checks.common import (
     MetricAccumulator,
+    add_metric_scope,
     add_common_arguments,
     add_metric_arguments,
     base_metadata,
@@ -47,7 +48,7 @@ def shuffled_gradient_attribution(model, noisy: torch.Tensor, seed: int) -> torc
 def attribution_dependent(metrics):
     return {
         name: value for name, value in metrics.items()
-        if name in {"taas", "caf", "ass", "rs"} or name.startswith("caf_at_")
+        if name in {"taas", "caf", "ass", "rs"}
     }
 
 
@@ -55,7 +56,7 @@ def main(args) -> None:
     set_seed(args.seed)
     device = select_device(args.cpu)
     dataset = build_dataset(args)
-    loader = make_loader(dataset, args)
+    loader = make_loader(dataset, args, subset_seed=args.seed)
     model, model_metadata = load_model(args, device)
     config = make_config(args)
     accumulators = {"real": MetricAccumulator(), "shuffled": MetricAccumulator()}
@@ -88,6 +89,16 @@ def main(args) -> None:
         {name: shuffled[name] - baseline[name] for name in baseline},
     ))
     metadata = base_metadata(args, model_metadata)
+    add_metric_scope(
+        metadata,
+        manipulated_inputs=["attribution_map"],
+        reported_by_level={"level3": ["taas", "caf", "ass", "rs"]},
+        omitted_invariants={
+            "level1": "Model prediction and signal references are unchanged.",
+            "level2": "Removed signal and artifact reference are unchanged.",
+            "level3.bac": "BAC does not consume the attribution map.",
+        },
+    )
     metadata["expected_behavior"] = {
         "taas": "lower after shuffling",
         "caf": "lower or near zero after shuffling",

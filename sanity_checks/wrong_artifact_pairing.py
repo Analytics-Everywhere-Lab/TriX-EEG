@@ -12,6 +12,7 @@ from tqdm import tqdm
 from sanity_checks.common import (
     DATASET_CHOICES,
     MetricAccumulator,
+    add_metric_scope,
     add_common_arguments,
     add_metric_arguments,
     base_metadata,
@@ -99,6 +100,7 @@ def main(args) -> None:
                     raer_error_max=args.raer_error_max,
                     are_error_max=args.are_error_max,
                     residual_ratio_max=args.residual_ratio_max,
+                    aggregation=args.aggregation,
                 )
                 accumulators[condition].update({
                     name: metrics[name] for name in (
@@ -121,6 +123,21 @@ def main(args) -> None:
             donor_dataset=args.donor_dataset,
         ))
     metadata = base_metadata(args, model_metadata)
+    add_metric_scope(
+        metadata,
+        manipulated_inputs=["artifact_reference"],
+        reported_by_level={
+            "level2": [
+                "ras", "raer", "utility_raer", "artifact_reconstruction_error",
+                "utility_are", "rar", "utility_rar", "fs",
+            ]
+        },
+        omitted_invariants={
+            "level1": "Prediction, noisy input, and clean target are unchanged.",
+            "level2.nlr": "NLR does not consume the artifact reference.",
+            "level3": "Prediction and attribution map are unchanged.",
+        },
+    )
     metadata["expected_behavior"] = {
         "ras": "lower for wrong artifacts",
         "raer": "may change for raw donors; RMS-matching isolates morphology from energy scale",

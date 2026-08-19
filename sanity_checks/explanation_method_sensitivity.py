@@ -9,6 +9,7 @@ from tqdm import tqdm
 
 from sanity_checks.common import (
     MetricAccumulator,
+    add_metric_scope,
     add_common_arguments,
     add_metric_arguments,
     base_metadata,
@@ -34,7 +35,7 @@ from trix_eeg.level3_explanation_reliability import (
 def main(args) -> None:
     set_seed(args.seed)
     device = select_device(args.cpu)
-    loader = make_loader(build_dataset(args), args)
+    loader = make_loader(build_dataset(args), args, subset_seed=args.seed)
     model, model_metadata = load_model(args, device)
     config = make_config(args)
 
@@ -43,9 +44,11 @@ def main(args) -> None:
         "smoothgrad": lambda model, noisy, seed: smoothgrad_attribution(
             model, noisy, num_samples=args.smoothgrad_samples,
             noise_fraction=args.smoothgrad_noise_fraction, seed=seed,
+            gradient_batch_size=args.attribution_batch_size,
         ),
         "integrated_gradients": lambda model, noisy, seed: integrated_gradients_attribution(
             model, noisy, steps=args.ig_steps,
+            gradient_batch_size=args.attribution_batch_size,
         ),
     }
     accumulators = {name: MetricAccumulator() for name in methods}
@@ -61,7 +64,6 @@ def main(args) -> None:
             accumulators[name].update({
                 key: value for key, value in metrics.items()
                 if key in {"taas", "caf", "ass", "rs"}
-                or key.startswith("caf_at_")
             })
 
     records = [
@@ -69,10 +71,21 @@ def main(args) -> None:
         for name, accumulator in accumulators.items()
     ]
     metadata = base_metadata(args, model_metadata)
+    add_metric_scope(
+        metadata,
+        manipulated_inputs=["attribution_method", "attribution_map"],
+        reported_by_level={"level3": ["taas", "caf", "ass", "rs"]},
+        omitted_invariants={
+            "level1": "Model prediction and signal references are unchanged.",
+            "level2": "Removed signal and artifact reference are unchanged.",
+            "level3.bac": "BAC does not consume the attribution map.",
+        },
+    )
     metadata.update({
         "smoothgrad_samples": args.smoothgrad_samples,
         "smoothgrad_noise_fraction": args.smoothgrad_noise_fraction,
         "integrated_gradients_steps": args.ig_steps,
+        "attribution_gradient_batch_size": args.attribution_batch_size,
         "expected_behavior": (
             "TAAS, CAF, ASS, and RS need not be identical, but model rankings and "
             "the qualitative reliability conclusion should remain consistent. "
@@ -90,6 +103,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--smoothgrad-samples", type=int, default=32)
     parser.add_argument("--smoothgrad-noise-fraction", type=float, default=0.1)
     parser.add_argument("--ig-steps", type=int, default=32)
+    parser.add_argument(
+        "--attribution-batch-size", type=int, default=4,
+        help="Maximum backward-pass batch size inside SmoothGrad and IG.",
+    )
     parser.add_argument("--output", default="runs/sanity_checks/explanation_methods.json")
     return parser
 

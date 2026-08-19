@@ -10,6 +10,7 @@ from tqdm import tqdm
 
 from sanity_checks.common import (
     MetricAccumulator,
+    add_metric_scope,
     add_common_arguments,
     add_metric_arguments,
     base_metadata,
@@ -81,12 +82,14 @@ def main(args) -> None:
                     noisy, prediction, clean, fs=args.fs,
                     delta_snr_max=settings["delta_snr_max"],
                     band_power_error_max=settings["band_power_error_max"],
+                    aggregation=args.aggregation,
                 )
                 level2 = level2_removal_faithfulness(
                     noisy, prediction, clean, artifact,
                     raer_error_max=settings["raer_error_max"],
                     are_error_max=settings["are_error_max"],
                     residual_ratio_max=settings["residual_ratio_max"],
+                    aggregation=args.aggregation,
                 )
                 if threshold_name == "baseline":
                     selected = {
@@ -112,6 +115,18 @@ def main(args) -> None:
         for label, name, value, _ in condition_list
     ]
     metadata = base_metadata(args, model_metadata)
+    add_metric_scope(
+        metadata,
+        manipulated_inputs=["metric_normalization_threshold"],
+        reported_by_level={
+            "level1": ["utility_delta_snr", "bps", "ds"],
+            "level2": ["utility_raer", "utility_are", "utility_rar", "fs"],
+        },
+        omitted_invariants={
+            "raw_metrics": "Raw metrics do not consume normalization thresholds.",
+            "level3": "No Level-3 threshold is swept by this experiment.",
+        },
+    )
     metadata["protocol"] = (
         "One-factor-at-a-time sweep. Each row reports only the utility and "
         "aggregate score that consume the manipulated threshold."
