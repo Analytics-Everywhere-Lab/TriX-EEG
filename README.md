@@ -52,10 +52,6 @@ The default explanation target is the energy removed by the denoiser,
   across the five subsets. Levels 1 and 2 are reported as single values without
   artificial zero-error bars.
 
-EEGDenoiseNet subsets are stratified across the ten SNR conditions; EEG-Motion
-subsets are stratified across the three held-out trials. The complete protocol,
-including metric definitions and fixed thresholds, is documented in
-[`EVALUATION_PROTOCOL.md`](EVALUATION_PROTOCOL.md).
 
 ### Run the complete benchmark
 
