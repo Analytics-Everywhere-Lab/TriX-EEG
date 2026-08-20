@@ -1,23 +1,23 @@
 # TriX-EEG implementation
 
-This directory implements all equations of `Trix-EEG`framework as
+This directory implements the TriX-EEG framework metrics as
 sample-wise metrics. Dataset summaries are macro means over windows, and the
 final TDS is the geometric mean of the three summarized level scores.
 
 ## Level analysis
 
-- `level1_signal_validity.py` implements equations 3-13. It measures temporal
+- `level1_signal_validity.py`. It measures temporal
   reconstruction, periodogram reconstruction, waveform correlation, SNR gain,
   and preservation of delta/theta/alpha/beta/gamma power. Its DS answers:
   *does the output remain a valid clean EEG signal?*
-- `level2_removal_faithfulness.py` implements equations 14-23. It compares
+- `level2_removal_faithfulness.py`. It compares
   `noisy - prediction` to the paired true artifact in morphology and energy,
   adds normalized Artifact Reconstruction Error (ARE), then measures
   projection-based neural leakage and residual artifact. FS is the mean of
   RAS, RAER utility, ARE utility, NLR utility, and RAR utility. It answers:
   *did the model remove the correct component rather than merely produce a
   plausible waveform?*
-- `level3_explanation_reliability.py` implements equations 24-38. It uses the
+- `level3_explanation_reliability.py`. It uses the
   absolute input gradient of removed energy as temporal attribution, then
   tests soft temporal artifact alignment, spectral intervention
   consistency, causal deletion, and perturbation stability. Its RS answers:
@@ -80,8 +80,9 @@ RS = mean(TAAS, BAC, CAF, ASS)
 TDS = GM(DS, FS, RS)
 ```
 
-The command-line value `--aggregation legacy_arithmetic` remains accepted for
-backward compatibility. No alternative level-score aggregation is supported.
+The aggregation policy is fixed. The command-line value
+`--aggregation legacy_arithmetic` remains accepted for backward compatibility;
+no alternative level-score aggregation is supported.
 Artifact-normalized Level-2 scores remain inapplicable when the artifact
 reference is zero.
 
@@ -120,17 +121,6 @@ run; a value of zero uses the complete test set. Level-3 experiments default to
 64 samples because SmoothGrad and Integrated Gradients require repeated forward
 and backward passes.
 
-Two invariances are expected from the definitions and are recorded in output
-metadata: BAC does not use the temporal attribution map, so attribution
-shuffling does not change it; NLR does not use the artifact reference, so wrong
-artifact pairing does not change it. The wrong-pairing script reports both raw
-donor artifacts and RMS-matched donors, allowing morphology sensitivity to be
-separated from an artifact-energy mismatch.
-
-Every result also includes a `metric_scope` metadata block that identifies the
-manipulated input, affected metrics grouped by level, and intentionally omitted
-invariants. After running all six checks for the three datasets, generate the
-dependency-aware report with:
 
 ```bash
 python -m sanity_checks.generate_levelwise_report \
