@@ -18,7 +18,6 @@ from torch.utils.data import DataLoader
 
 from eeg_denoise.motion_data import make_motion_dataset, make_motion_splits
 from eegdenoisenet_dataset import create_benchmark_datasets
-from eval_motion_dataset import build_benchmark, build_braanet, load_checkpoint
 from load_dataset import (
     MOTION_EEG_DATA_FOLDER,
     MOTION_EEG_SIGNAL_LENGTH,
@@ -37,6 +36,7 @@ BENCHMARK_NAMES = (
     "simplecnn", "fcnn", "complexcnn", "rnnlstm",
     "deepseparator", "det", "lrr_unet", "gan",
 )
+AVAILABLE_DENOISERS = (*BENCHMARK_NAMES, "braanet")
 
 
 def _loader(dataset, args, device):
@@ -82,27 +82,38 @@ def _motion_dataset(args):
 
 
 def _experiments(dataset_name, args):
+    selected = AVAILABLE_DENOISERS if args.denoiser == "all" else (args.denoiser,)
     if dataset_name in {"eeg_eog", "eeg_emg"}:
         suffix = dataset_name.removeprefix("eeg_")
         root = args.benchmark_checkpoint_root
         for name in BENCHMARK_NAMES:
+            if name not in selected:
+                continue
             path = os.path.join(root, f"{name}_{suffix}", "best.pt")
             yield "benchmark", name, path
-        braa_subdir = suffix.upper()
-        yield "braanet", "braanet", os.path.join(
-            args.braanet_checkpoint_root, braa_subdir, "best.pt"
-        )
+        if "braanet" in selected:
+            braa_subdir = suffix.upper()
+            yield "braanet", "braanet", os.path.join(
+                args.braanet_checkpoint_root, braa_subdir, "best.pt"
+            )
     else:
         for name in BENCHMARK_NAMES:
+            if name not in selected:
+                continue
             yield "benchmark", name, os.path.join(
                 args.motion_checkpoint_root, "benchmarks", name, "best.pt"
             )
-        yield "braanet", "braanet", os.path.join(
-            args.motion_checkpoint_root, "braanet", "best.pt"
-        )
+        if "braanet" in selected:
+            yield "braanet", "braanet", os.path.join(
+                args.motion_checkpoint_root, "braanet", "best.pt"
+            )
 
 
 def _load_model(family, name, checkpoint_path, device):
+    # Model implementations are optional for users evaluating an external model.
+    # Delay this import so that parsing the protocol CLI has no baseline dependency.
+    from eval_motion_dataset import build_benchmark, build_braanet, load_checkpoint
+
     checkpoint = load_checkpoint(checkpoint_path, device)
     if family == "braanet":
         model, _, config = build_braanet(checkpoint, device)
@@ -115,6 +126,8 @@ def _load_model(family, name, checkpoint_path, device):
 def _write_outputs(results, output_json, output_csv, metadata):
     output_dir = os.path.dirname(output_json) or "."
     os.makedirs(output_dir, exist_ok=True)
+    csv_output_dir = os.path.dirname(output_csv) or "."
+    os.makedirs(csv_output_dir, exist_ok=True)
     with open(output_json, "w") as stream:
         json.dump({"metadata": metadata, "results": results}, stream, indent=2)
 
@@ -174,7 +187,32 @@ def _write_outputs(results, output_json, output_csv, metadata):
             writer.writerow(values)
 
 
+def print_evaluation_profile(evaluation):
+    """Print the three metric profiles and final score profile consistently."""
+    profiles = (
+        ("Level 1", "DS", evaluation["level1_signal_validity"], (
+            "rrmse_temporal", "rrmse_spectral", "cc", "delta_snr_db", "bps",
+        )),
+        ("Level 2", "FS", evaluation["level2_removal_faithfulness"], (
+            "ras", "raer", "artifact_reconstruction_error", "nlr", "rar",
+        )),
+        ("Level 3", "RS", evaluation["level3_explanation_reliability"], (
+            "taas", "bac", "caf", "ass",
+        )),
+    )
+    scores = evaluation["scores"]
+    for label, score_label, metrics, names in profiles:
+        values = " ".join(f"{name}={metrics[name]:.4f}" for name in names)
+        print(f"  {label} ({score_label}={scores[score_label.lower()]:.4f}): {values}")
+    print(
+        "  Final: "
+        f"DS={scores['ds']:.4f} FS={scores['fs']:.4f} "
+        f"RS={scores['rs']:.4f} TDS={scores['tds']:.4f}"
+    )
+
+
 def main(args):
+    validate_cli_args(args)
     if args.taas_n_fft <= 1 or args.taas_n_fft > args.signal_length:
         raise ValueError("--taas-n-fft must be in [2, signal length]")
     if args.taas_hop_length <= 0:
@@ -218,7 +256,8 @@ def main(args):
         else:
             raise ValueError(f"Unknown dataset: {dataset_name}")
         loader = _loader(dataset, args, device)
-        for family, name, checkpoint_path in _experiments(dataset_name, args):
+        for family, name, default_checkpoint_path in _experiments(dataset_name, args):
+            checkpoint_path = args.checkpoint or default_checkpoint_path
             if not os.path.isfile(checkpoint_path):
                 message = f"Missing checkpoint: {checkpoint_path}"
                 if args.skip_failed:
@@ -259,11 +298,7 @@ def main(args):
                 if evaluation_std is not None:
                     result["evaluation_std"] = evaluation_std
                 results.append(result)
-                scores = evaluation["scores"]
-                print(
-                    f"  DS={scores['ds']:.4f} FS={scores['fs']:.4f} "
-                    f"RS={scores['rs']:.4f} TDS={scores['tds']:.4f}"
-                )
+                print_evaluation_profile(evaluation)
                 _write_outputs(
                     results, args.output_json, args.output_csv,
                     {"device": str(device), "failures": failures},
@@ -310,6 +345,15 @@ def build_parser():
     parser.add_argument(
         "--datasets", nargs="+", default=["eeg_eog", "eeg_emg", "motion"],
         choices=["eeg_eog", "eeg_emg", "motion"],
+    )
+    parser.add_argument(
+        "--denoiser", default="all", choices=[*AVAILABLE_DENOISERS, "all"],
+        help="Evaluate one of the nine built-in denoisers (default: all).",
+    )
+    parser.add_argument(
+        "--checkpoint", default=None,
+        help=("Override the inferred checkpoint path. This is intended for one "
+              "denoiser and one dataset."),
     )
     parser.add_argument("--benchmark-checkpoint-root", default="runs/benchmark_compare")
     parser.add_argument("--braanet-checkpoint-root", default="runs/braanet")
@@ -370,5 +414,13 @@ def build_parser():
     return parser
 
 
+def validate_cli_args(args):
+    if args.checkpoint and (args.denoiser == "all" or len(args.datasets) != 1):
+        raise ValueError(
+            "--checkpoint requires one --denoiser and exactly one --datasets value"
+        )
+    return args
+
+
 if __name__ == "__main__":
-    main(build_parser().parse_args())
+    main(validate_cli_args(build_parser().parse_args()))
