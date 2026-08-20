@@ -80,6 +80,81 @@ The JSON output preserves configuration, checkpoints, subset indices,
 level-wise metrics, aggregate scores, and uncertainty estimates. The CSV file
 provides the corresponding flat summary.
 
+### Evaluate one of the nine included denoisers
+
+Select one of `simplecnn`, `fcnn`, `complexcnn`, `rnnlstm`, `deepseparator`,
+`det`, `lrr_unet`, `gan`, or `braanet` with `--denoiser`. For example, this
+evaluates the saved EEGDenoiseNet-EOG FCNN checkpoint:
+
+```bash
+python evaluate_trix_eeg.py \
+  --denoiser fcnn \
+  --datasets eeg_eog \
+  --evaluation-seeds 42 43 44 45 46 \
+  --level3-max-samples 64 \
+  --output-json runs/evaluation/fcnn_eog.json \
+  --output-csv runs/evaluation/fcnn_eog.csv \
+  --cpu
+```
+
+Checkpoint paths are inferred from the training layout under
+`runs/benchmark_compare`, `runs/braanet`, and `runs/motion_train`. To evaluate
+a built-in architecture from another checkpoint, select exactly one dataset
+and pass `--checkpoint path/to/best.pt`. Use `--help` to see data paths and all
+protocol controls.
+
+The JSON report is the canonical, reproducible result. Each entry contains
+`level1_signal_validity`, `level2_removal_faithfulness`,
+`level3_explanation_reliability`, and the final `scores` profile (`DS`, `FS`,
+`RS`, and `TDS`). It also records the checkpoint, dataset, protocol settings,
+sample counts, exact Level-3 subset indices, and multi-seed standard deviations.
+The CSV is a one-row-per-model/dataset summary containing the same headline
+metrics and scores.
+
+### Evaluate a new model
+
+`evaluate_custom_denoiser.py` applies the identical datasets, metrics,
+aggregation, reporting schema, and seeded Level-3 protocol to an external
+PyTorch model. A raw state dict needs a small importable factory because weights
+alone do not describe the model architecture. The factory must accept the JSON
+keyword arguments and return an uninitialized `torch.nn.Module`:
+
+```python
+# my_model.py
+from my_package import MyDenoiser
+
+def build_model(channels=1, signal_length=512):
+    return MyDenoiser(channels=channels, signal_length=signal_length)
+```
+
+Run the standard evaluation from the repository root:
+
+```bash
+python evaluate_custom_denoiser.py \
+  --model-name my_denoiser \
+  --weight-file path/to/model_weights.pt \
+  --model-factory my_model:build_model \
+  --model-kwargs '{"channels": 1, "signal_length": 512}' \
+  --datasets eeg_eog \
+  --evaluation-seeds 42 43 44 45 46 \
+  --level3-max-samples 64 \
+  --output-json runs/evaluation/my_denoiser_eog.json \
+  --output-csv runs/evaluation/my_denoiser_eog.csv \
+  --cpu
+```
+
+The weight file may be a raw state dict or a checkpoint containing
+`model_state_dict` or `state_dict`. Use `--state-dict-key KEY` for another
+layout. Loading is strict by default; `--non-strict` is available for deliberate
+partial loads and records missing/unexpected keys in report metadata.
+
+Models receive `[batch, channel, time]` and may return a tensor, a tuple whose
+first element is the prediction, or a mapping containing `y_hat`. Use
+`--input-layout bt` for models expecting `[batch, time]`, and `--output-key NAME`
+for a different mapping key. A self-contained TorchScript model needs only
+`--weight-file` (omit `--model-factory`). In every case the prediction must be
+`[batch, time]` or `[batch, channel, time]` and match the input length.
+
 ### Sanity checks
 
 Six dependency-aware checks test whether each metric responds to the input it
