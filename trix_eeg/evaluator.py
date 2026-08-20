@@ -30,7 +30,7 @@ class TriXConfig:
     taas_frequency_range: tuple[float, float] = (0.5, 45.0)
     taas_n_fft: int = 128
     taas_hop_length: int = 32
-    deletion_fractions: tuple[float, ...] = (0.1, 0.2, 0.3)
+    deletion_fractions: tuple[float, ...] = (0.1, 0.2, 0.3, 0.5, 0.8)
     random_deletion_repeats: int = 3
     stability_noise_fraction: float = 0.01
     level3_max_samples: int = 64
