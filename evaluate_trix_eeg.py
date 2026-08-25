@@ -8,8 +8,10 @@ import csv
 import gc
 import glob
 import json
+import math
 import os
 import traceback
+from copy import deepcopy
 from types import SimpleNamespace
 
 import numpy as np
@@ -26,6 +28,7 @@ from load_dataset import (
 )
 from trix_eeg.evaluator import (
     TriXConfig,
+    evaluate_trix_level1_level2,
     evaluate_trix_model,
     evaluate_trix_model_multiseed,
 )
@@ -37,6 +40,112 @@ BENCHMARK_NAMES = (
     "deepseparator", "det", "lrr_unet", "gan",
 )
 AVAILABLE_DENOISERS = (*BENCHMARK_NAMES, "braanet")
+
+
+def _load_level3_reuse(path, evaluation_seeds):
+    if path is None:
+        return None, None
+    with open(path) as stream:
+        payload = json.load(stream)
+    source_seeds = payload.get("metadata", {}).get("evaluation_seeds")
+    if list(source_seeds or ()) != list(evaluation_seeds or ()):
+        raise ValueError(
+            "--reuse-level3-json must use the same evaluation seeds: "
+            f"source={source_seeds}, requested={evaluation_seeds}"
+        )
+    index = {
+        (str(row["dataset"]), str(row["family"]), str(row["model"])): row
+        for row in payload.get("results", ())
+    }
+    if not index:
+        raise ValueError(f"No reusable evaluations found in {path}")
+    return index, payload.get("metadata", {})
+
+
+def _reuse_level3_evaluation(
+    source_row, level1, level2, total_samples, config, checkpoint_path
+):
+    if os.path.normpath(str(source_row["checkpoint"])) != os.path.normpath(checkpoint_path):
+        raise ValueError(
+            "Level-3 reuse checkpoint mismatch: "
+            f"source={source_row['checkpoint']}, current={checkpoint_path}"
+        )
+    source = source_row["evaluation"]
+    source_scores = source["scores"]
+    if not math.isclose(level1["ds"], float(source_scores["ds"]), abs_tol=1e-6):
+        raise ValueError("Recomputed DS does not match the Level-3 source run")
+    source_fs = float(source_scores["fs"])
+    if source_fs <= 0.0:
+        raise ValueError("Cannot rescale TDS from a non-positive source FS")
+
+    source_tds = float(source_scores["tds"])
+    rs = float(source_scores["rs"])
+    tds_by_name = {
+        "tds": source_tds * (float(level2["fs"]) / source_fs) ** (1.0 / 3.0),
+        "tds_error_projection_v2": source_tds * (
+            float(level2["fs_error_projection_v2"]) / source_fs
+        ) ** (1.0 / 3.0),
+        "tds_prediction_rar_legacy": source_tds * (
+            float(level2["fs_prediction_rar_legacy"]) / source_fs
+        ) ** (1.0 / 3.0),
+    }
+    scores = {
+        "aggregation": config.aggregation,
+        "ds": level1["ds"],
+        "fs": level2["fs"],
+        "rs": rs,
+        "tds": tds_by_name["tds"],
+        "ds_legacy_arithmetic": level1["ds_legacy_arithmetic"],
+        "fs_legacy_arithmetic": level2["fs_legacy_arithmetic"],
+        "rs_legacy_arithmetic": rs,
+        "tds_legacy_arithmetic": tds_by_name["tds"],
+        "fs_error_projection_v2": level2["fs_error_projection_v2"],
+        "tds_error_projection_v2": tds_by_name["tds_error_projection_v2"],
+        "fs_prediction_rar_legacy": level2["fs_prediction_rar_legacy"],
+        "tds_prediction_rar_legacy": tds_by_name["tds_prediction_rar_legacy"],
+    }
+    settings = dict(config.__dict__)
+    settings["evaluation_seeds"] = list(
+        source.get("settings", {}).get("evaluation_seeds", ())
+    )
+    settings["level3_reused"] = True
+    evaluation = {
+        "num_samples_level1_level2": total_samples,
+        "num_samples_level3": source["num_samples_level3"],
+        "level1_signal_validity": level1,
+        "level2_removal_faithfulness": level2,
+        "level3_explanation_reliability": deepcopy(
+            source["level3_explanation_reliability"]
+        ),
+        "scores": scores,
+        "settings": settings,
+    }
+    for name in ("level3_subset_indices", "level3_subset_indices_by_seed"):
+        if name in source:
+            evaluation[name] = deepcopy(source[name])
+
+    source_std = source_row.get("evaluation_std", {})
+    source_score_std = source_std.get("scores", {})
+    rs_std = float(source_score_std.get("rs", 0.0))
+    tds_std = float(source_score_std.get("tds", 0.0))
+    tds_std_by_name = {
+        name: tds_std * value / source_tds if source_tds > 0 else 0.0
+        for name, value in tds_by_name.items()
+    }
+    evaluation_std = {
+        "level3_explanation_reliability": deepcopy(
+            source_std.get("level3_explanation_reliability", {})
+        ),
+        "scores": {
+            "rs": rs_std,
+            "tds": tds_std_by_name["tds"],
+            "rs_legacy_arithmetic": rs_std,
+            "tds_legacy_arithmetic": tds_std_by_name["tds"],
+            "tds_error_projection_v2": tds_std_by_name["tds_error_projection_v2"],
+            "tds_prediction_rar_legacy": tds_std_by_name["tds_prediction_rar_legacy"],
+        },
+    }
+    return evaluation, evaluation_std
 
 
 def _loader(dataset, args, device):
@@ -139,14 +248,23 @@ def _write_outputs(results, output_json, output_csv, metadata):
         "ds", "fs", "rs", "tds",
         "ds_legacy_arithmetic", "fs_legacy_arithmetic",
         "rs_legacy_arithmetic", "tds_legacy_arithmetic",
+        "fs_prediction_rar_legacy", "tds_prediction_rar_legacy",
+        "fs_error_projection_v2", "tds_error_projection_v2",
     ]
     metric_columns = [
         "rrmse_temporal", "rrmse_spectral", "cc", "delta_snr_db", "bps",
-        "ras", "raer", "artifact_reconstruction_error", "nlr", "rar",
+        "ras", "raer", "artifact_reconstruction_error",
+        "beta_artifact", "age", "beta_clean", "cnl",
+        "regression_residual_ratio", "regression_condition_number",
+        "nlr", "rar",
+        "rar_prediction_legacy",
+        "rar_error_projection_v2",
         "taas", "bac", "caf", "ass",
     ]
     stochastic_columns = [
         "rs", "tds", "rs_legacy_arithmetic", "tds_legacy_arithmetic",
+        "tds_prediction_rar_legacy",
+        "tds_error_projection_v2",
         "taas", "bac", "caf", "ass",
     ]
     columns = identity_columns + score_columns + metric_columns
@@ -175,7 +293,12 @@ def _write_outputs(results, output_json, output_csv, metadata):
                     "rrmse_temporal", "rrmse_spectral", "cc", "delta_snr_db", "bps"
                 )},
                 **{key: level2.get(key) for key in (
-                    "ras", "raer", "artifact_reconstruction_error", "nlr", "rar"
+                    "ras", "raer", "artifact_reconstruction_error",
+                    "beta_artifact", "age", "beta_clean", "cnl",
+                    "regression_residual_ratio", "regression_condition_number",
+                    "nlr", "rar",
+                    "rar_prediction_legacy",
+                    "rar_error_projection_v2",
                 )},
                 **{key: level3.get(key) for key in ("taas", "bac", "caf", "ass")},
             }
@@ -194,7 +317,9 @@ def print_evaluation_profile(evaluation):
             "rrmse_temporal", "rrmse_spectral", "cc", "delta_snr_db", "bps",
         )),
         ("Level 2", "FS", evaluation["level2_removal_faithfulness"], (
-            "ras", "raer", "artifact_reconstruction_error", "nlr", "rar",
+            "ras", "raer", "artifact_reconstruction_error",
+            "age", "cnl", "rar_prediction_legacy",
+            "rar_error_projection_v2",
         )),
         ("Level 3", "RS", evaluation["level3_explanation_reliability"], (
             "taas", "bac", "caf", "ass",
@@ -231,6 +356,9 @@ def main(args):
         band_power_error_max=args.band_power_error_max,
         raer_error_max=args.raer_error_max,
         are_error_max=args.are_error_max,
+        age_error_max=args.age_error_max,
+        cnl_error_max=args.cnl_error_max,
+        regression_ridge_fraction=args.regression_ridge_fraction,
         residual_ratio_max=args.residual_ratio_max,
         taas_frequency_range=(args.taas_frequency_low, args.taas_frequency_high),
         taas_n_fft=args.taas_n_fft,
@@ -242,6 +370,9 @@ def main(args):
         level3_batch_size=args.level3_batch_size,
         seed=args.seed,
         weights=tuple(args.weights),
+    )
+    reuse_index, reuse_metadata = _load_level3_reuse(
+        args.reuse_level3_json, args.evaluation_seeds
     )
     results, failures = [], []
     for dataset_name in args.datasets:
@@ -275,7 +406,19 @@ def main(args):
                         f"Checkpoint signal length {model_config.signal_length} != "
                         f"evaluation length {args.signal_length}"
                     )
-                if args.evaluation_seeds:
+                if reuse_index is not None:
+                    source_key = (dataset_name, family, name)
+                    if source_key not in reuse_index:
+                        raise ValueError(f"Missing reusable Level-3 result for {source_key}")
+                    level1, level2, total_samples = evaluate_trix_level1_level2(
+                        model, loader, device, config,
+                        description=f"{dataset_name}/{name}",
+                    )
+                    evaluation, evaluation_std = _reuse_level3_evaluation(
+                        reuse_index[source_key], level1, level2, total_samples,
+                        config, checkpoint_path,
+                    )
+                elif args.evaluation_seeds:
                     evaluation, evaluation_std = evaluate_trix_model_multiseed(
                         model, loader, device, config, args.evaluation_seeds,
                         description=f"{dataset_name}/{name}",
@@ -329,6 +472,10 @@ def main(args):
         "snr_levels": args.snr_levels,
         "framework_settings": config.__dict__,
         "evaluation_seeds": args.evaluation_seeds,
+        "level3_reused_from": args.reuse_level3_json,
+        "level3_source_framework_settings": (
+            reuse_metadata.get("framework_settings") if reuse_metadata else None
+        ),
         "uncertainty_scope": (
             "fixed dataset split/checkpoints; five seeded stratified Level-3 "
             "subsets with one matched stochastic-operation seed per subset"
@@ -381,6 +528,12 @@ def build_parser():
         help=("Evaluate Level 3 on one seeded stratified subset per value, using "
               "the same value as its stochastic-operation seed; report mean/SD."),
     )
+    parser.add_argument(
+        "--reuse-level3-json", default=None,
+        help=("Reuse Level-3 values, subset indices, and uncertainty from a "
+              "compatible result JSON while recomputing complete Levels 1/2. "
+              "Intended for changes confined to deterministic Level-2 metrics."),
+    )
     parser.add_argument("--cpu", action="store_true")
     parser.add_argument("--skip-failed", action="store_true")
     parser.add_argument("--delta-snr-max", type=float, default=20.0)
@@ -393,6 +546,9 @@ def build_parser():
     parser.add_argument("--band-power-error-max", type=float, default=1.0)
     parser.add_argument("--raer-error-max", type=float, default=1.0)
     parser.add_argument("--are-error-max", type=float, default=1.0)
+    parser.add_argument("--age-error-max", type=float, default=1.0)
+    parser.add_argument("--cnl-error-max", type=float, default=1.0)
+    parser.add_argument("--regression-ridge-fraction", type=float, default=1e-6)
     parser.add_argument("--residual-ratio-max", type=float, default=0.1)
     parser.add_argument("--taas-frequency-low", type=float, default=0.5)
     parser.add_argument("--taas-frequency-high", type=float, default=45.0)

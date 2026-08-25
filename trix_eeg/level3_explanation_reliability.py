@@ -31,10 +31,9 @@ def removed_energy(model, noisy: torch.Tensor) -> tuple[torch.Tensor, torch.Tens
 def gradient_attribution(
     model, noisy: torch.Tensor, *, absolute: bool = True
 ) -> torch.Tensor:
-    """Input gradient of g(y)=||y-f(y)||_2^2 (equations 24-25).
+    """Input gradient of g(y)=||y-f(y)||_2^2
 
-    Metrics use the default non-negative magnitude map. ``absolute=False`` is
-    provided for visualizations that need to preserve gradient direction.
+    Metrics use the default non-negative magnitude map. ``absolute=False``
     """
     differentiable_input = as_bct(noisy).detach().clone().requires_grad_(True)
     _, energy = removed_energy(model, differentiable_input)
@@ -57,8 +56,7 @@ def smoothgrad_attribution(
 ) -> torch.Tensor:
     """Average absolute gradients over RMS-scaled Gaussian perturbations.
 
-    The target remains ``g(y)=||y-f(y)||_2^2``. Averaging non-negative maps
-    preserves the saliency convention in equation (24).
+    The target remains ``g(y)=||y-f(y)||_2^2``
     """
     noisy = as_bct(noisy).detach()
     if num_samples <= 0:
@@ -113,8 +111,7 @@ def integrated_gradients_attribution(
 ) -> torch.Tensor:
     """Absolute Integrated Gradients attribution for removed energy.
 
-    A zero signal is used as the default baseline. The integral is estimated
-    with the trapezoidal rule over ``steps`` equal intervals.
+    A zero signal is used as the default baseline.
     """
     noisy = as_bct(noisy).detach()
     if steps <= 0:
@@ -207,12 +204,9 @@ def causal_deletion_effects(
     seed: int = 42,
     eps: float = EPS,
 ) -> dict[str, torch.Tensor]:
-    """Return Dtop, Drand, and CAF(k) from equations (34)-(36).
+    """Return Dtop, Drand, and CAF(k)
 
-    Results have shape ``[batch, num_fractions]``. This public diagnostic is
-    useful for plotting the causal quantities hidden by the final mean CAF.
-    The deletion baseline and random protocol match
-    :func:`level3_explanation_reliability` exactly.
+    Results have shape ``[batch, num_fractions]``.
     """
     noisy = as_bct(noisy)
     fractions = tuple(float(value) for value in deletion_fractions)
@@ -271,8 +265,7 @@ def temporal_artifact_alignment(
 
     Artifact energy is marginalized over channels and the selected STFT
     frequencies. Attribution magnitudes are averaged over the same Hann-window
-    frame locations and marginalized over channels. Both temporal profiles are
-    L1-normalized before calculating total-variation similarity.
+    frame locations and marginalized over channels. 
     """
     saliency, artifact = map(as_bct, (saliency, artifact))
     if saliency.shape != artifact.shape:
@@ -353,8 +346,8 @@ def level3_explanation_reliability(
     taas_frequency_range: tuple[float, float] = (0.5, 45.0),
     taas_n_fft: int = 128,
     taas_hop_length: int = 32,
-    deletion_fractions: Sequence[float] = (0.1, 0.2, 0.3),
-    random_deletion_repeats: int = 5,
+    deletion_fractions: Sequence[float] = (0.1, 0.2, 0.3, 0.5, 0.8),
+    random_deletion_repeats: int = 3,
     stability_noise_fraction: float = 0.01,
     seed: int = 42,
     eps: float = EPS,
@@ -366,9 +359,7 @@ def level3_explanation_reliability(
     This implementation uses absolute input gradients, soft temporal artifact
     alignment, a zero deletion baseline, and RMS-scaled Gaussian perturbations.
     Custom stochastic attribution functions receive the same seed for the
-    original and perturbed input by default, so ASS measures input sensitivity
-    rather than Monte Carlo noise. Set ``perturbed_attribution_seed_offset``
-    when intentionally comparing independently randomized maps.
+    original and perturbed input by default.
     """
     validate_aggregation(aggregation)
     noisy, artifact = map(as_bct, (noisy, artifact))
@@ -407,12 +398,14 @@ def level3_explanation_reliability(
                 flatten_signal(prediction), dim=-1
             ).clamp_min(eps)
             importance.append(numerator / denominator)
+        # BAC metric
         importance = torch.stack(importance, dim=-1)
         p_distribution = importance / importance.sum(dim=-1, keepdim=True).clamp_min(eps)
         artifact_power = spectral_band_power(artifact, fs, bands).sum(dim=1)
         q_distribution = artifact_power / artifact_power.sum(dim=-1, keepdim=True).clamp_min(eps)
         bac = 1.0 - 0.5 * (p_distribution - q_distribution).abs().sum(dim=-1)
 
+        # CAF metric
         generator = torch.Generator(device=noisy.device)
         generator.manual_seed(int(seed))
         caf_by_fraction = []
@@ -440,6 +433,8 @@ def level3_explanation_reliability(
         perturbation = torch.randn(
             noisy.shape, dtype=noisy.dtype, device=noisy.device, generator=generator
         ) * (stability_noise_fraction * noise_rms)
+
+    # ASS metric
     perturbed_saliency = _compute_attribution(
         model,
         noisy + perturbation,

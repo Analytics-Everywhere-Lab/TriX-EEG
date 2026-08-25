@@ -16,7 +16,7 @@ macro-averaged, giving every valid window equal weight.
 | Level | Question | Metrics | Score |
 |---|---|---|---|
 | Level 1: Signal Validity | Does `x_hat` remain a valid clean EEG signal? | Temporal RRMSE, spectral RRMSE, correlation coefficient (CC), SNR improvement, band-power score (BPS) | DS |
-| Level 2: Removal Faithfulness | Does `a_hat` match the true artifact without removing neural activity or leaving artifact behind? | Removed Artifact Similarity (RAS), Removed Artifact Energy Ratio (RAER), Artifact Reconstruction Error (ARE), Neural Leakage Ratio (NLR), Residual Artifact Ratio (RAR) | FS |
+| Level 2: Removal Faithfulness | Does `a_hat` match the true artifact without removing neural activity? | Removed Artifact Similarity (RAS), Removed Artifact Energy Ratio (RAER), Artifact Reconstruction Error (ARE), Artifact Gain Error (AGE), Conditional Neural Leakage (CNL) | FS |
 | Level 3: Explanation Reliability | Is the attribution artifact-aligned, intervention-consistent, causal, and stable? | Temporal Artifact Alignment Score (TAAS), Band Artifact Consistency (BAC), Causal Attribution Faithfulness (CAF), Attribution Stability Score (ASS) | RS |
 
 All component metrics are converted to utilities in `[0, 1]`, where higher is
@@ -25,7 +25,7 @@ aggregation:
 
 ```text
 DS  = mean(U_RRMSE-T, U_RRMSE-S, U_CC, U_delta-SNR, BPS)
-FS  = mean(RAS, U_RAER, U_ARE, U_NLR, U_RAR)
+FS  = mean(RAS, U_RAER, U_ARE, U_AGE, U_CNL)
 RS  = mean(TAAS, BAC, CAF, ASS)
 TDS = (DS * FS * RS) ** (1 / 3)
 ```
@@ -34,6 +34,11 @@ The arithmetic means make each metric within a level equally interpretable.
 The geometric mean used for TDS limits compensation across levels: strong
 reconstruction cannot fully conceal poor removal faithfulness or unreliable
 explanations. 
+
+AGE and CNL jointly regress the removed component as
+`a_hat = beta_a * a + beta_x * x + residual`. AGE is `|beta_a - 1|`, while
+CNL is `|beta_x|`; both use unit tolerances by default. NLR, the preceding
+reconstruction-error projection.
 
 The default explanation target is the energy removed by the denoiser,
 `g(y) = ||y - f(y)||_2^2`; its attribution is the absolute input gradient
