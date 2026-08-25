@@ -122,6 +122,9 @@ def add_metric_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--band-power-error-max", type=float, default=1.0)
     parser.add_argument("--raer-error-max", type=float, default=1.0)
     parser.add_argument("--are-error-max", type=float, default=1.0)
+    parser.add_argument("--age-error-max", type=float, default=1.0)
+    parser.add_argument("--cnl-error-max", type=float, default=1.0)
+    parser.add_argument("--regression-ridge-fraction", type=float, default=1e-6)
     parser.add_argument("--residual-ratio-max", type=float, default=0.1)
     parser.add_argument("--taas-frequency-low", type=float, default=0.5)
     parser.add_argument("--taas-frequency-high", type=float, default=45.0)
@@ -141,6 +144,9 @@ def make_config(args) -> TriXConfig:
         band_power_error_max=args.band_power_error_max,
         raer_error_max=args.raer_error_max,
         are_error_max=args.are_error_max,
+        age_error_max=args.age_error_max,
+        cnl_error_max=args.cnl_error_max,
+        regression_ridge_fraction=args.regression_ridge_fraction,
         residual_ratio_max=args.residual_ratio_max,
         taas_frequency_range=(args.taas_frequency_low, args.taas_frequency_high),
         taas_n_fft=args.taas_n_fft,

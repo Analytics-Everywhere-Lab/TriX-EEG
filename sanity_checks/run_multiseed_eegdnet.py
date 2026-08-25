@@ -57,6 +57,10 @@ def main():
         "--model-label", default=None,
         help="Human-readable model name used in the final report.",
     )
+    parser.add_argument(
+        "--framework-label", default="joint-regression Level 2, legacy aggregation",
+        help="Framework/metric-set description used in the final report.",
+    )
     parser.add_argument("--cpu", action="store_true")
     args = parser.parse_args()
     if len(args.seeds) < 5:
@@ -138,7 +142,7 @@ def main():
         "--input-dir", str(args.output_dir),
         "--output", str(args.output_dir / "REPORT_LEVELWISE.md"),
         "--model-label", args.model_label or (
-            f"{default_label} (legacy aggregation, five subsets)"
+            f"{default_label} ({args.framework_label}, five subsets)"
         ),
     ])
 

@@ -131,8 +131,8 @@ def random_model_section(results) -> list[str]:
             ("l2_ras", "RAS"),
             ("l2_raer", "RAER"),
             ("l2_artifact_reconstruction_error", "ARE"),
-            ("l2_nlr", "NLR"),
-            ("l2_rar", "RAR"),
+            ("l2_age", "AGE"),
+            ("l2_cnl", "CNL"),
             ("fs", "FS"),
         )),
         ("Level 3", (
@@ -232,7 +232,8 @@ def clean_section(results) -> list[str]:
         ))
         diagnostic_rows.append((
             DATASET_LABELS[dataset],
-            mean_only(record, "l2_nlr"), mean_only(record, "l2_utility_nlr"),
+            mean_only(record, "l2_beta_clean"), mean_only(record, "l2_cnl"),
+            mean_only(record, "l2_utility_cnl"),
             mean_only(record, "removed_l2"),
             mean_only(record, "removed_relative_l2"),
         ))
@@ -244,9 +245,9 @@ def clean_section(results) -> list[str]:
         "### Level 1", "",
         *table(["Dataset", *(label for _, label in l1_metrics)], rows), "",
         "### Related Level-2 and identity diagnostics", "",
-        *table(["Dataset", "NLR", "U_NLR", "Removed L2", "Removed relative L2"], diagnostic_rows),
+        *table(["Dataset", "beta_x", "CNL", "U_CNL", "Removed L2", "Removed relative L2"], diagnostic_rows),
         "",
-        "RAS, RAER, ARE, RAR, and FS are omitted because a zero artifact makes their artifact-normalized interpretation undefined or misleading.",
+        "RAS, RAER, ARE, AGE, and FS are omitted because a zero artifact makes their artifact-normalized interpretation undefined or misleading. CNL remains interpretable because it directly measures removal proportional to the clean input.",
         "",
     ]
 
@@ -257,7 +258,9 @@ def threshold_section(results) -> list[str]:
         "band_power_error_max": ("Level 1", "bps", "BPS", "ds"),
         "raer_error_max": ("Level 2", "utility_raer", "U_RAER", "fs"),
         "are_error_max": ("Level 2", "utility_are", "U_ARE", "fs"),
-        "residual_ratio_max": ("Level 2", "utility_rar", "U_RAR", "fs"),
+        "age_error_max": ("Level 2", "utility_age", "U_AGE", "fs"),
+        "cnl_error_max": ("Level 2", "utility_cnl", "U_CNL", "fs"),
+        "residual_ratio_max": ("Level 2", "utility_rar", "U_RAR (diagnostic)", None),
     }
     lines = [
         "## 5. Metric-threshold sensitivity",
@@ -276,7 +279,8 @@ def threshold_section(results) -> list[str]:
                 rows.append((
                     DATASET_LABELS[dataset], threshold, record["threshold_value"],
                     utility_label, mean_only(record, utility_key),
-                    score_key.upper(), mean_only(record, score_key),
+                    score_key.upper() if score_key else "—",
+                    mean_only(record, score_key) if score_key else "—",
                 ))
         lines.extend([
             f"### {level}", "",
@@ -294,7 +298,8 @@ def wrong_pairing_section(results) -> list[str]:
     metrics = (
         ("ras", "RAS"), ("raer", "RAER"), ("utility_raer", "U_RAER"),
         ("artifact_reconstruction_error", "ARE"), ("utility_are", "U_ARE"),
-        ("rar", "RAR"), ("utility_rar", "U_RAR"), ("fs", "FS"),
+        ("age", "AGE"), ("utility_age", "U_AGE"),
+        ("cnl", "CNL"), ("utility_cnl", "U_CNL"), ("fs", "FS"),
     )
     rows, observations = [], []
     names = {
@@ -325,7 +330,7 @@ def wrong_pairing_section(results) -> list[str]:
         "",
         *observations,
         "",
-        "Level 1, Level 3, and NLR are omitted because they do not consume the artifact reference.",
+        "Level 1, Level 3, and NLR are omitted because they do not consume the artifact reference. The retained old RAR is diagnostic and excluded from the updated FS.",
         "",
     ]
 
@@ -376,19 +381,19 @@ def assessment_section(loaded) -> list[str]:
         "## Overall behavior assessment",
         "",
         "- **Random attribution: passes.** All four attribution-dependent Level-3 metrics decrease on every dataset. CAF and ASS provide most of the discrimination; TAAS is comparatively weak on EMG and motion.",
-        f"- **Random model: Levels 1 and 2 pass; standalone Level 3 does not.** DS, FS, and TDS decrease on every dataset, but RS changes by "
+        f"- **Random model: Levels 1 and 2 pass when DS and FS decrease; standalone Level 3 is not expected to rank trained models by itself.** RS changes by "
         + ", ".join(f"{value:+.4f}" for value in random_rs)
         + " (EOG, EMG, motion). RS must therefore be conditioned on a valid denoiser.",
         "- **Explanation method: broadly robust.** RS ranges are "
         + ", ".join(f"{value:.4f}" for value in explanation_rs_ranges)
         + " (EOG, EMG, motion). The dataset with the largest range shows moderate method sensitivity.",
-        "- **Clean input: does not meet ideal identity behavior.** DS/removed-relative-L2 pairs are "
+        "- **Clean input: tests identity behavior.** DS/removed-relative-L2 pairs are "
         + ", ".join(f"{ds:.4f}/{removed:.4f}" for ds, removed in clean_rows)
         + ". The very negative ΔSNR is an expected zero-noise-denominator edge case and should not be interpreted normally.",
         f"- **Threshold sweep: mathematically monotonic but not threshold-insensitive.** The largest Level-1 score spread is {largest_l1_spread[0]:.4f} ({largest_l1_spread[1]}); ARE changes FS by up to {largest_are_spread:.4f}. Thresholds must be fixed before comparisons.",
-        "- **Wrong pairing: passes overall.** FS drops by "
+        "- **Wrong pairing: passes overall when the joint-regression FS is reference-sensitive.** FS drops by "
         + ", ".join(f"{value:.4f}" for value in wrong_drops)
-        + " (EOG, EMG, motion). RAS and ARE respond correctly, while RAR can improve under a wrong reference; motion discrimination remains weaker.",
+        + " (EOG, EMG, motion). RAS, ARE, AGE, and CNL identify which aspects of the mismatch drive the change.",
         "",
     ]
 
@@ -444,5 +449,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
-

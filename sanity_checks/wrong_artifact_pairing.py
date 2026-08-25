@@ -99,6 +99,9 @@ def main(args) -> None:
                     noisy, prediction, clean, reference,
                     raer_error_max=args.raer_error_max,
                     are_error_max=args.are_error_max,
+                    age_error_max=args.age_error_max,
+                    cnl_error_max=args.cnl_error_max,
+                    regression_ridge_fraction=args.regression_ridge_fraction,
                     residual_ratio_max=args.residual_ratio_max,
                     aggregation=args.aggregation,
                 )
@@ -106,7 +109,13 @@ def main(args) -> None:
                     name: metrics[name] for name in (
                         "ras", "raer", "utility_raer",
                         "artifact_reconstruction_error", "utility_are",
-                        "rar", "utility_rar", "fs",
+                        "beta_artifact", "age", "utility_age",
+                        "beta_clean", "cnl", "utility_cnl",
+                        "regression_residual_ratio",
+                        "rar", "utility_rar",
+                        "rar_error_projection_v2", "utility_rar_error_projection_v2",
+                        "rar_prediction_legacy", "utility_rar_prediction_legacy",
+                        "fs", "fs_error_projection_v2", "fs_prediction_rar_legacy",
                     )
                 })
 
@@ -129,7 +138,12 @@ def main(args) -> None:
         reported_by_level={
             "level2": [
                 "ras", "raer", "utility_raer", "artifact_reconstruction_error",
-                "utility_are", "rar", "utility_rar", "fs",
+                "utility_are", "rar", "utility_rar",
+                "beta_artifact", "age", "utility_age",
+                "beta_clean", "cnl", "utility_cnl", "regression_residual_ratio",
+                "rar_error_projection_v2", "utility_rar_error_projection_v2",
+                "rar_prediction_legacy", "utility_rar_prediction_legacy",
+                "fs", "fs_error_projection_v2", "fs_prediction_rar_legacy",
             ]
         },
         omitted_invariants={
@@ -142,7 +156,11 @@ def main(args) -> None:
         "ras": "lower for wrong artifacts",
         "raer": "may change for raw donors; RMS-matching isolates morphology from energy scale",
         "artifact_reconstruction_error": "higher for wrong artifacts",
-        "rar": "changes because its projection uses the artifact reference",
+        "age": "higher when the removed signal has the wrong artifact gain",
+        "cnl": "conditional clean coefficient may change because the joint regression reference changes",
+        "rar": "retained old prediction-projection diagnostic",
+        "rar_error_projection_v2": "retained reconstruction-error projection comparison",
+        "rar_prediction_legacy": "retained prediction-based comparison",
         "fs": "lower for wrong artifacts, including the ARE penalty",
         "omitted": "NLR does not consume the artifact reference",
     }

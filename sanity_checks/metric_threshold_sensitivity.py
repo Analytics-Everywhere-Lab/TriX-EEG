@@ -33,6 +33,8 @@ THRESHOLD_FIELDS = (
     "band_power_error_max",
     "raer_error_max",
     "are_error_max",
+    "age_error_max",
+    "cnl_error_max",
     "residual_ratio_max",
 )
 
@@ -41,7 +43,9 @@ UTILITY_BY_THRESHOLD = {
     "band_power_error_max": ("bps", "ds", "level1"),
     "raer_error_max": ("utility_raer", "fs", "level2"),
     "are_error_max": ("utility_are", "fs", "level2"),
-    "residual_ratio_max": ("utility_rar", "fs", "level2"),
+    "age_error_max": ("utility_age", "fs", "level2"),
+    "cnl_error_max": ("utility_cnl", "fs", "level2"),
+    "residual_ratio_max": ("utility_rar", None, "level2"),
 }
 
 
@@ -53,6 +57,8 @@ def conditions(args):
         "band_power_error_max": args.band_power_error_max_values,
         "raer_error_max": args.raer_error_max_values,
         "are_error_max": args.are_error_max_values,
+        "age_error_max": args.age_error_max_values,
+        "cnl_error_max": args.cnl_error_max_values,
         "residual_ratio_max": args.residual_ratio_max_values,
     }
     for name, values in sweeps.items():
@@ -88,6 +94,9 @@ def main(args) -> None:
                     noisy, prediction, clean, artifact,
                     raer_error_max=settings["raer_error_max"],
                     are_error_max=settings["are_error_max"],
+                    age_error_max=settings["age_error_max"],
+                    cnl_error_max=settings["cnl_error_max"],
+                    regression_ridge_fraction=args.regression_ridge_fraction,
                     residual_ratio_max=settings["residual_ratio_max"],
                     aggregation=args.aggregation,
                 )
@@ -99,12 +108,16 @@ def main(args) -> None:
                         "bps": level1["bps"],
                         "utility_raer": level2["utility_raer"],
                         "utility_are": level2["utility_are"],
+                        "utility_age": level2["utility_age"],
+                        "utility_cnl": level2["utility_cnl"],
                         "utility_rar": level2["utility_rar"],
                     }
                 else:
                     utility, score, level = UTILITY_BY_THRESHOLD[threshold_name]
                     source = level1 if level == "level1" else level2
-                    selected = {utility: source[utility], score: source[score]}
+                    selected = {utility: source[utility]}
+                    if score is not None:
+                        selected[score] = source[score]
                 accumulators[label].update(selected)
 
     records = [
@@ -120,7 +133,10 @@ def main(args) -> None:
         manipulated_inputs=["metric_normalization_threshold"],
         reported_by_level={
             "level1": ["utility_delta_snr", "bps", "ds"],
-            "level2": ["utility_raer", "utility_are", "utility_rar", "fs"],
+            "level2": [
+                "utility_raer", "utility_are", "utility_age", "utility_cnl",
+                "fs", "utility_rar (diagnostic only)",
+            ],
         },
         omitted_invariants={
             "raw_metrics": "Raw metrics do not consume normalization thresholds.",
@@ -145,6 +161,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--raer-error-max-values", nargs="+", type=float,
                         default=[0.5, 1.0, 2.0])
     parser.add_argument("--are-error-max-values", nargs="+", type=float,
+                        default=[0.5, 1.0, 2.0])
+    parser.add_argument("--age-error-max-values", nargs="+", type=float,
+                        default=[0.5, 1.0, 2.0])
+    parser.add_argument("--cnl-error-max-values", nargs="+", type=float,
                         default=[0.5, 1.0, 2.0])
     parser.add_argument("--residual-ratio-max-values", nargs="+", type=float,
                         default=[0.05, 0.1, 0.2])

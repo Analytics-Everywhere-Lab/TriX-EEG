@@ -32,7 +32,12 @@ def flatten_evaluation(evaluation):
         "macro_band_power_error", "bps", "ds",
     )
     level2_names = (
-        "ras", "raer", "artifact_reconstruction_error", "nlr", "rar", "fs",
+        "ras", "raer", "artifact_reconstruction_error",
+        "beta_artifact", "age", "beta_clean", "cnl",
+        "regression_residual_ratio", "regression_condition_number",
+        "nlr", "rar",
+        "rar_error_projection_v2", "rar_prediction_legacy", "fs",
+        "fs_error_projection_v2", "fs_prediction_rar_legacy",
     )
     level3_names = ("taas", "bac", "caf", "ass", "rs")
     return {
@@ -100,7 +105,12 @@ def main(args) -> None:
                 "macro_band_power_error", "bps", "ds",
             ],
             "level2": [
-                "ras", "raer", "artifact_reconstruction_error", "nlr", "rar", "fs",
+                "ras", "raer", "artifact_reconstruction_error",
+                "beta_artifact", "age", "beta_clean", "cnl",
+                "regression_residual_ratio", "regression_condition_number",
+                "nlr", "rar",
+                "rar_error_projection_v2", "rar_prediction_legacy", "fs",
+                "fs_error_projection_v2", "fs_prediction_rar_legacy",
             ],
             "level3": ["taas", "bac", "caf", "ass", "rs"],
             "overall": ["tds"],

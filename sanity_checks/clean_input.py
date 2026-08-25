@@ -50,6 +50,9 @@ def main(args) -> None:
                 clean, prediction, clean, zero_artifact,
                 raer_error_max=args.raer_error_max,
                 are_error_max=args.are_error_max,
+                age_error_max=args.age_error_max,
+                cnl_error_max=args.cnl_error_max,
+                regression_ridge_fraction=args.regression_ridge_fraction,
                 residual_ratio_max=args.residual_ratio_max,
                 aggregation=args.aggregation,
             )
@@ -68,6 +71,9 @@ def main(args) -> None:
                 )},
                 "l2_nlr": level2["nlr"],
                 "l2_utility_nlr": level2["utility_nlr"],
+                "l2_beta_clean": level2["beta_clean"],
+                "l2_cnl": level2["cnl"],
+                "l2_utility_cnl": level2["utility_cnl"],
                 **diagnostics,
             })
 
@@ -80,12 +86,12 @@ def main(args) -> None:
                 "rrmse_temporal", "rrmse_spectral", "cc", "delta_snr_db",
                 "macro_band_power_error", "bps", "ds",
             ],
-            "level2": ["nlr", "utility_nlr"],
+            "level2": ["beta_clean", "cnl", "utility_cnl", "nlr", "utility_nlr"],
             "diagnostic": ["removed_l2", "removed_relative_l2"],
         },
         omitted_invariants={
             "level2.artifact_required": (
-                "RAS, RAER, ARE, RAR, and FS are undefined or misleading when artifact=0."
+                "RAS, RAER, ARE, AGE, RAR, and FS are undefined or misleading when artifact=0."
             ),
             "level3": "No attribution input is manipulated by this check.",
         },
@@ -95,6 +101,7 @@ def main(args) -> None:
         "removed_l2_and_relative_l2": "very low",
         "l1_bps": "high",
         "l2_nlr": "low, but unstable/interpreted cautiously when removed energy is tiny",
+        "l2_cnl": "low; directly measures removal proportional to the clean input",
         "artifact_required_metrics": "omitted because artifact=0",
     }
     write_results(
