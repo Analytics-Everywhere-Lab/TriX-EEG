@@ -12,9 +12,10 @@ final TDS is the geometric mean of the three summarized level scores.
   *does the output remain a valid clean EEG signal?*
 - `level2_removal_faithfulness.py`. It compares
   `noisy - prediction` to the paired true artifact in morphology and energy,
-  adds normalized Artifact Reconstruction Error (ARE), then measures
-  projection-based neural leakage and residual artifact. FS is the mean of
-  RAS, RAER utility, ARE utility, NLR utility, and RAR utility. It answers:
+  adds normalized Artifact Reconstruction Error (ARE), then jointly regresses
+  the removed component on the artifact and clean signal. FS is the mean of
+  RAS, RAER utility, ARE utility, Artifact Gain Error utility, and Conditional
+  Neural Leakage utility. It answers:
   *did the model remove the correct component rather than merely produce a
   plausible waveform?*
 - `level3_explanation_reliability.py`. It uses the
@@ -35,7 +36,12 @@ fixing them. The runner records these choices in every JSON result. Defaults:
 - `band_power_error_max = 1.0`
 - `raer_error_max = 1.0`
 - `are_error_max = 1.0`
+- `age_error_max = 1.0`
+- `cnl_error_max = 1.0`
+- `regression_ridge_fraction = 1e-6`
 - `residual_ratio_max = 0.1`
+- RAR = the retained original prediction projection, reported diagnostically;
+  it and `rar_error_projection_v2` do not contribute to the primary FS
 - TAAS = 128-sample Hann STFT frames with a 32-sample hop over 0.5-45 Hz
 - attribution = absolute gradient of `||y - f(y)||^2` with respect to input
 - BAC band suppression = FFT-bin deletion for 0.5-45 Hz neural bands
@@ -75,7 +81,7 @@ geometric mean:
 
 ```text
 DS = mean(U_RRMSE-T, U_RRMSE-S, U_CC, U_delta-SNR, BPS)
-FS = mean(RAS, U_RAER, U_ARE, U_NLR, U_RAR)
+FS = mean(RAS, U_RAER, U_ARE, U_AGE, U_CNL)
 RS = mean(TAAS, BAC, CAF, ASS)
 TDS = GM(DS, FS, RS)
 ```
