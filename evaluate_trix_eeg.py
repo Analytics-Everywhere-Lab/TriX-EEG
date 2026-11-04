@@ -192,6 +192,18 @@ def _motion_dataset(args):
 
 def _experiments(dataset_name, args):
     selected = AVAILABLE_DENOISERS if args.denoiser == "all" else (args.denoiser,)
+    if args.checkpoint_noise_type == "mixed":
+        for name in BENCHMARK_NAMES:
+            if name not in selected:
+                continue
+            yield "benchmark", name, os.path.join(
+                args.benchmark_checkpoint_root, f"{name}_mixed", "best.pt"
+            )
+        if "braanet" in selected:
+            yield "braanet", "braanet", os.path.join(
+                args.braanet_checkpoint_root, "Mixed", "best.pt"
+            )
+        return
     if dataset_name in {"eeg_eog", "eeg_emg"}:
         suffix = dataset_name.removeprefix("eeg_")
         root = args.benchmark_checkpoint_root
@@ -219,8 +231,6 @@ def _experiments(dataset_name, args):
 
 
 def _load_model(family, name, checkpoint_path, device):
-    # Model implementations are optional for users evaluating an external model.
-    # Delay this import so that parsing the protocol CLI has no baseline dependency.
     from eval_motion_dataset import build_benchmark, build_braanet, load_checkpoint
 
     checkpoint = load_checkpoint(checkpoint_path, device)
@@ -469,6 +479,7 @@ def main(args):
     metadata = {
         "device": str(device),
         "datasets": args.datasets,
+        "checkpoint_noise_type": args.checkpoint_noise_type,
         "snr_levels": args.snr_levels,
         "framework_settings": config.__dict__,
         "evaluation_seeds": args.evaluation_seeds,
@@ -505,6 +516,12 @@ def build_parser():
     parser.add_argument("--benchmark-checkpoint-root", default="runs/benchmark_compare")
     parser.add_argument("--braanet-checkpoint-root", default="runs/braanet")
     parser.add_argument("--motion-checkpoint-root", default="runs/motion_train")
+    parser.add_argument(
+        "--checkpoint-noise-type", choices=("dataset", "mixed"),
+        default="dataset",
+        help=("Use each dataset's matched checkpoint (default) or use the same "
+              "mixed-artifact checkpoints on every dataset."),
+    )
     parser.add_argument("--eeg-npy", default="data/EEG_all_epochs.npy")
     parser.add_argument("--eog-npy", default="data/EOG_all_epochs.npy")
     parser.add_argument("--emg-npy", default="data/EMG_all_epochs.npy")
@@ -555,9 +572,9 @@ def build_parser():
     parser.add_argument("--taas-n-fft", type=int, default=128)
     parser.add_argument("--taas-hop-length", type=int, default=32)
     parser.add_argument(
-        "--deletion-fractions", nargs="+", type=float, default=[0.1, 0.2, 0.3]
+        "--deletion-fractions", nargs="+", type=float, default=[0.1, 0.2, 0.3, 0.5, 0.8]
     )
-    parser.add_argument("--random-deletion-repeats", type=int, default=3)
+    parser.add_argument("--random-deletion-repeats", type=int, default=5)
     parser.add_argument("--stability-noise-fraction", type=float, default=0.01)
     parser.add_argument(
         "--level3-max-samples", type=int, default=64,
