@@ -30,20 +30,6 @@ RS  = mean(TAAS, BAC, CAF, ASS)
 TDS = (DS * FS * RS) ** (1 / 3)
 ```
 
-The arithmetic means make each metric within a level equally interpretable.
-The geometric mean used for TDS limits compensation across levels: strong
-reconstruction cannot fully conceal poor removal faithfulness or unreliable
-explanations. 
-
-AGE and CNL jointly regress the removed component as
-`a_hat = beta_a * a + beta_x * x + residual`. AGE is `|beta_a - 1|`, while
-CNL is `|beta_x|`; both use unit tolerances by default. NLR, the preceding
-reconstruction-error projection.
-
-The default explanation target is the energy removed by the denoiser,
-`g(y) = ||y - f(y)||_2^2`; its attribution is the absolute input gradient
-`|dg(y)/dy|`.
-
 ### Evaluation protocol
 
 - Levels 1 and 2 are deterministic for fixed inputs and checkpoints and are
@@ -199,7 +185,6 @@ python -m pytest -q tests
 ├── load_dataset.py                      # Both datasets and loader factories
 ├── model.py                             # BandRouteNet
 ├── trix_eeg/                            # Metric and aggregation implementation
-├── sanity_checks/                       # Six dependency-aware sanity checks
 ├── configs/                             # Model configuration
 ├── modules/                             # BandRouteNet layers and losses
 ├── benchmark_models/                    # Baseline architectures
