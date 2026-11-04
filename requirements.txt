@@ -7,3 +7,6 @@ pandas
 matplotlib
 PyYAML
 einops
+mne
+scikit-learn
+pyriemann

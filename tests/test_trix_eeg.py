@@ -117,10 +117,68 @@ def test_level2_arithmetic_formula():
     )
     expected = (
         metrics["ras"] + metrics["utility_raer"] + metrics["utility_are"]
-        + metrics["utility_nlr"] + metrics["utility_rar"]
+        + metrics["utility_age"] + metrics["utility_cnl"]
     ) / 5.0
     assert torch.allclose(metrics["fs"], expected)
     assert torch.allclose(metrics["fs"], metrics["fs_legacy_arithmetic"])
+
+
+def test_joint_regression_has_correct_perfect_removal_boundaries():
+    clean = torch.tensor([[[1.0, -2.0, 3.0, -4.0]]])
+    artifact = torch.tensor([[[1.0, 0.5, -1.0, 0.25]]])
+    noisy = clean + artifact
+
+    perfect = level2_removal_faithfulness(
+        noisy, clean, clean, artifact, regression_ridge_fraction=0.0
+    )
+    assert torch.allclose(perfect["beta_artifact"], torch.ones(1), atol=1e-6)
+    assert torch.allclose(perfect["beta_clean"], torch.zeros(1), atol=1e-6)
+    assert torch.allclose(perfect["age"], torch.zeros(1), atol=1e-6)
+    assert torch.allclose(perfect["cnl"], torch.zeros(1), atol=1e-6)
+    assert torch.allclose(perfect["fs"], torch.ones(1), atol=1e-5)
+
+
+def test_age_tracks_partial_artifact_removal():
+    torch.manual_seed(22)
+    clean = torch.randn(1, 1, 64)
+    artifact = torch.randn_like(clean)
+    noisy = clean + artifact
+    observed = []
+    for removed_fraction in (0.0, 0.25, 0.5, 1.0):
+        metrics = level2_removal_faithfulness(
+            noisy, noisy - removed_fraction * artifact, clean, artifact,
+            regression_ridge_fraction=0.0,
+        )
+        observed.append(metrics["age"].item())
+    expected = [1.0, 0.75, 0.5, 0.0]
+    assert observed == pytest.approx(expected, abs=1e-6)
+    assert observed == sorted(observed, reverse=True)
+
+
+def test_cnl_is_conditional_on_the_artifact_component():
+    torch.manual_seed(23)
+    clean = torch.randn(1, 1, 128)
+    artifact = torch.randn_like(clean) + 0.4 * clean
+    noisy = clean + artifact
+    removed = artifact + 0.2 * clean
+    metrics = level2_removal_faithfulness(
+        noisy, noisy - removed, clean, artifact, regression_ridge_fraction=0.0
+    )
+    assert metrics["beta_artifact"].item() == pytest.approx(1.0, abs=1e-5)
+    assert metrics["beta_clean"].item() == pytest.approx(0.2, abs=1e-5)
+    assert metrics["age"].item() == pytest.approx(0.0, abs=1e-5)
+    assert metrics["cnl"].item() == pytest.approx(0.2, abs=1e-5)
+
+
+def test_public_rar_retains_original_prediction_projection():
+    clean = torch.tensor([[[1.0, 2.0, 3.0, 4.0]]])
+    artifact = torch.tensor([[[1.0, 0.0, 1.0, 0.0]]])
+    noisy = clean + artifact
+    metrics = level2_removal_faithfulness(noisy, clean, clean, artifact)
+    assert torch.allclose(metrics["rar"], metrics["rar_prediction_legacy"])
+    assert torch.allclose(
+        metrics["utility_rar"], metrics["utility_rar_prediction_legacy"]
+    )
 
 
 def test_artifact_reconstruction_error_penalizes_wrong_pairing():

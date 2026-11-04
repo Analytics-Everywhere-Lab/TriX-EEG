@@ -1,4 +1,4 @@
-# Reconstruction is Not Enough: Towards Trustworthy and Explainable Evaluation of EEG Artifact Removal
+# Beyond Reconstruction: A Unified Framework for Trustworthy and Explainable EEG Artifact Removal Evaluation
 
 TriX-EEG evaluates EEG artifact-removal models from three complementary
 perspectives: whether the denoised output is valid, whether the correct artifact
@@ -16,7 +16,7 @@ macro-averaged, giving every valid window equal weight.
 | Level | Question | Metrics | Score |
 |---|---|---|---|
 | Level 1: Signal Validity | Does `x_hat` remain a valid clean EEG signal? | Temporal RRMSE, spectral RRMSE, correlation coefficient (CC), SNR improvement, band-power score (BPS) | DS |
-| Level 2: Removal Faithfulness | Does `a_hat` match the true artifact without removing neural activity or leaving artifact behind? | Removed Artifact Similarity (RAS), Removed Artifact Energy Ratio (RAER), Artifact Reconstruction Error (ARE), Neural Leakage Ratio (NLR), Residual Artifact Ratio (RAR) | FS |
+| Level 2: Removal Faithfulness | Does `a_hat` match the true artifact without removing neural activity? | Removed Artifact Similarity (RAS), Removed Artifact Energy Ratio (RAER), Artifact Reconstruction Error (ARE), Artifact Gain Error (AGE), Conditional Neural Leakage (CNL) | FS |
 | Level 3: Explanation Reliability | Is the attribution artifact-aligned, intervention-consistent, causal, and stable? | Temporal Artifact Alignment Score (TAAS), Band Artifact Consistency (BAC), Causal Attribution Faithfulness (CAF), Attribution Stability Score (ASS) | RS |
 
 All component metrics are converted to utilities in `[0, 1]`, where higher is
@@ -25,19 +25,10 @@ aggregation:
 
 ```text
 DS  = mean(U_RRMSE-T, U_RRMSE-S, U_CC, U_delta-SNR, BPS)
-FS  = mean(RAS, U_RAER, U_ARE, U_NLR, U_RAR)
+FS  = mean(RAS, U_RAER, U_ARE, U_AGE, U_CNL)
 RS  = mean(TAAS, BAC, CAF, ASS)
 TDS = (DS * FS * RS) ** (1 / 3)
 ```
-
-The arithmetic means make each metric within a level equally interpretable.
-The geometric mean used for TDS limits compensation across levels: strong
-reconstruction cannot fully conceal poor removal faithfulness or unreliable
-explanations. 
-
-The default explanation target is the energy removed by the denoiser,
-`g(y) = ||y - f(y)||_2^2`; its attribution is the absolute input gradient
-`|dg(y)/dy|`.
 
 ### Evaluation protocol
 
@@ -151,33 +142,6 @@ for a different mapping key. A self-contained TorchScript model needs only
 `--weight-file` (omit `--model-factory`). In every case the prediction must be
 `[batch, time]` or `[batch, channel, time]` and match the input length.
 
-### Sanity checks
-
-Six dependency-aware checks test whether each metric responds to the input it
-is designed to consume:
-
-1. shuffled attribution;
-2. randomly initialized model;
-3. explanation-method sensitivity using Gradient × Input, SmoothGrad, and
-   Integrated Gradients;
-4. clean input with no artifact;
-5. metric-threshold sensitivity;
-6. incorrect artifact pairing.
-
-Run all checks for EEGDNet over the five matched subsets:
-
-```bash
-python -m sanity_checks.run_multiseed_eegdnet \
-  --output-dir runs/sanity_checks/eegdnet_legacy_multisubset \
-  --seeds 42 43 44 45 46 \
-  --max-samples 64 \
-  --cpu
-```
-
-The generated `REPORT_LEVELWISE.md` reports only metrics that consume the
-quantity manipulated by a given check. Expected invariants are omitted instead
-of being incorrectly interpreted as failures.
-
 ## Setup
 
 Use Python 3.10 or newer. Install the PyTorch build appropriate for your CPU or
@@ -221,7 +185,6 @@ python -m pytest -q tests
 ├── load_dataset.py                      # Both datasets and loader factories
 ├── model.py                             # BandRouteNet
 ├── trix_eeg/                            # Metric and aggregation implementation
-├── sanity_checks/                       # Six dependency-aware sanity checks
 ├── configs/                             # Model configuration
 ├── modules/                             # BandRouteNet layers and losses
 ├── benchmark_models/                    # Baseline architectures

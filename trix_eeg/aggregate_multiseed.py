@@ -19,13 +19,18 @@ LEVEL_GROUPS = (
     "scores",
 )
 CSV_METRICS = (
-    "ds", "fs", "rs", "tds",
+    "ds", "fs", "rs", "tds", "tds_error_projection_v2", "tds_prediction_rar_legacy",
     "rrmse_temporal", "rrmse_spectral", "cc", "delta_snr_db", "bps",
-    "ras", "raer", "artifact_reconstruction_error", "nlr", "rar",
+    "ras", "raer", "artifact_reconstruction_error",
+    "beta_artifact", "age", "utility_age", "beta_clean", "cnl", "utility_cnl",
+    "regression_residual_ratio", "regression_condition_number", "nlr", "rar",
+    "rar_error_projection_v2", "fs_error_projection_v2",
+    "rar_prediction_legacy", "fs_prediction_rar_legacy",
     "taas", "bac", "caf", "ass",
 )
 STOCHASTIC_METRICS = {
-    "rs", "tds", "taas", "bac", "caf", "ass",
+    "rs", "tds", "tds_error_projection_v2", "tds_prediction_rar_legacy",
+    "taas", "bac", "caf", "ass",
 }
 
 

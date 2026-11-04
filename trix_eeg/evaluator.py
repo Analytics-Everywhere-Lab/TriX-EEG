@@ -26,7 +26,12 @@ class TriXConfig:
     band_power_error_max: float = 1.0
     raer_error_max: float = 1.0
     are_error_max: float = 1.0
+    age_error_max: float = 1.0
+    cnl_error_max: float = 1.0
+    regression_ridge_fraction: float = 1e-6
     residual_ratio_max: float = 0.1
+    level2_definition: str = "joint_regression_age_cnl_v4"
+    rar_definition: str = "prediction_projection_legacy_diagnostic_only"
     taas_frequency_range: tuple[float, float] = (0.5, 45.0)
     taas_n_fft: int = 128
     taas_hop_length: int = 32
@@ -107,11 +112,23 @@ def _evaluate_level1_level2(model, loader, device, config, description):
                 noisy, prediction, clean, artifact,
                 raer_error_max=config.raer_error_max,
                 are_error_max=config.are_error_max,
+                age_error_max=config.age_error_max,
+                cnl_error_max=config.cnl_error_max,
+                regression_ridge_fraction=config.regression_ridge_fraction,
                 residual_ratio_max=config.residual_ratio_max,
                 aggregation=config.aggregation,
             ))
             total_samples += noisy.shape[0]
     return level1_accumulator.means(), level2_accumulator.means(), total_samples
+
+
+def evaluate_trix_level1_level2(
+    model, loader, device, config: TriXConfig, *, description="TriX"
+):
+    """Evaluate deterministic Levels 1 and 2 over the complete loader."""
+    model.eval()
+    validate_aggregation(config.aggregation)
+    return _evaluate_level1_level2(model, loader, device, config, description)
 
 
 def _evaluate_level3(model, loader, device, config, description, seed):
@@ -147,6 +164,19 @@ def _scores(level1, level2, level3, config):
         level3["rs_legacy_arithmetic"],
         weights=config.weights,
     )
+    # For comparison only
+    tds_prediction_rar_legacy = final_trix_score(
+        level1["ds"],
+        level2["fs_prediction_rar_legacy"],
+        level3["rs"],
+        weights=config.weights,
+    )
+    tds_error_projection_v2 = final_trix_score(
+        level1["ds"],
+        level2["fs_error_projection_v2"],
+        level3["rs"],
+        weights=config.weights,
+    )
     return {
         "aggregation": config.aggregation,
         "ds": level1["ds"], "fs": level2["fs"], "rs": level3["rs"],
@@ -155,6 +185,10 @@ def _scores(level1, level2, level3, config):
         "fs_legacy_arithmetic": level2["fs_legacy_arithmetic"],
         "rs_legacy_arithmetic": level3["rs_legacy_arithmetic"],
         "tds_legacy_arithmetic": tds_legacy,
+        "fs_prediction_rar_legacy": level2["fs_prediction_rar_legacy"],
+        "tds_prediction_rar_legacy": tds_prediction_rar_legacy,
+        "fs_error_projection_v2": level2["fs_error_projection_v2"],
+        "tds_error_projection_v2": tds_error_projection_v2,
     }
 
 
@@ -203,8 +237,7 @@ def evaluate_trix_model_multiseed(
     Level 1 and Level 2 are deterministic for fixed inputs/checkpoints, so they are
     evaluated once and are not assigned uncertainty fields. Level 3 and the
     resulting TDS are summarized with the mean and sample standard deviation over
-    ``seeds``. Each seed controls both subset selection and stochastic operations;
-    using the same seeds across models produces paired comparisons.
+    ``seeds``.
     """
     seeds = tuple(int(seed) for seed in seeds)
     if len(seeds) < 2:
