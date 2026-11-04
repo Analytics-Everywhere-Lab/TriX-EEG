@@ -1,4 +1,4 @@
-# Reconstruction is Not Enough: Towards Trustworthy and Explainable Evaluation of EEG Artifact Removal
+# Beyond Reconstruction: A Unified Framework for Trustworthy and Explainable EEG Artifact Removal Evaluation
 
 TriX-EEG evaluates EEG artifact-removal models from three complementary
 perspectives: whether the denoised output is valid, whether the correct artifact
@@ -155,33 +155,6 @@ first element is the prediction, or a mapping containing `y_hat`. Use
 for a different mapping key. A self-contained TorchScript model needs only
 `--weight-file` (omit `--model-factory`). In every case the prediction must be
 `[batch, time]` or `[batch, channel, time]` and match the input length.
-
-### Sanity checks
-
-Six dependency-aware checks test whether each metric responds to the input it
-is designed to consume:
-
-1. shuffled attribution;
-2. randomly initialized model;
-3. explanation-method sensitivity using Gradient × Input, SmoothGrad, and
-   Integrated Gradients;
-4. clean input with no artifact;
-5. metric-threshold sensitivity;
-6. incorrect artifact pairing.
-
-Run all checks for EEGDNet over the five matched subsets:
-
-```bash
-python -m sanity_checks.run_multiseed_eegdnet \
-  --output-dir runs/sanity_checks/eegdnet_legacy_multisubset \
-  --seeds 42 43 44 45 46 \
-  --max-samples 64 \
-  --cpu
-```
-
-The generated `REPORT_LEVELWISE.md` reports only metrics that consume the
-quantity manipulated by a given check. Expected invariants are omitted instead
-of being incorrectly interpreted as failures.
 
 ## Setup
 
